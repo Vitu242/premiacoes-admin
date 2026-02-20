@@ -75,3 +75,21 @@ export interface Bilhete {
   data: string;
   situacao: "pendente" | "pago" | "perdedor" | "cancelado";
 }
+
+export interface Lancamento {
+  id: string;
+  cambistaId: string;
+  tipo: "adiantar" | "retirar";
+  valor: number;
+  data: string;
+  observacao?: string;
+}
+
+export interface Resultado {
+  id: string;
+  extracaoId: string;
+  extracaoNome: string;
+  data: string; // dd/mm/yy
+  grupos: string; // ex: "01-02-03-04-05"
+  dezenas?: string;
+}

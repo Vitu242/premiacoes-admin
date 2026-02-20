@@ -1,11 +1,13 @@
 "use client";
 
-import type { Gerente, Cambista, Extracao, Bilhete } from "./types";
+import type { Gerente, Cambista, Extracao, Bilhete, Lancamento, Resultado } from "./types";
 
 const GERENTES_KEY = "premiacoes_gerentes";
 const CAMBISTAS_KEY = "premiacoes_cambistas";
 const EXTRACOES_KEY = "premiacoes_extracoes";
 const BILHETES_KEY = "premiacoes_bilhetes";
+const LANCAMENTOS_KEY = "premiacoes_lancamentos";
+const RESULTADOS_KEY = "premiacoes_resultados";
 const CONFIG_KEY = "premiacoes_config";
 
 export interface AppConfig {
@@ -367,4 +369,66 @@ export function cancelarBilhete(id: string): boolean {
     updateCambista(b.cambistaId, { entrada: Math.max(0, cam.entrada - b.total) });
   }
   return true;
+}
+
+// Lançamentos
+function loadLancamentos(): Lancamento[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const data = localStorage.getItem(LANCAMENTOS_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLancamentos(l: Lancamento[]) {
+  if (typeof window !== "undefined") localStorage.setItem(LANCAMENTOS_KEY, JSON.stringify(l));
+}
+
+export function getLancamentos(): Lancamento[] {
+  return loadLancamentos();
+}
+
+export function addLancamento(l: Omit<Lancamento, "id">): Lancamento {
+  const lista = getLancamentos();
+  const novo: Lancamento = { ...l, id: String(Date.now()) };
+  lista.push(novo);
+  saveLancamentos(lista);
+  const cam = getCambistas().find((c) => c.id === l.cambistaId);
+  if (cam) {
+    const delta = l.tipo === "adiantar" ? l.valor : -l.valor;
+    updateCambista(l.cambistaId, {
+      lancamentos: cam.lancamentos + delta,
+      saldo: Math.max(0, cam.saldo + delta),
+    });
+  }
+  return novo;
+}
+
+// Resultados
+function loadResultados(): Resultado[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const data = localStorage.getItem(RESULTADOS_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveResultados(r: Resultado[]) {
+  if (typeof window !== "undefined") localStorage.setItem(RESULTADOS_KEY, JSON.stringify(r));
+}
+
+export function getResultados(): Resultado[] {
+  return loadResultados();
+}
+
+export function addResultado(r: Omit<Resultado, "id">): Resultado {
+  const lista = getResultados();
+  const novo: Resultado = { ...r, id: String(Date.now()) };
+  lista.push(novo);
+  saveResultados(lista);
+  return novo;
 }

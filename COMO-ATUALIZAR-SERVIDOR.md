@@ -1,48 +1,63 @@
 # Como atualizar o site no servidor
 
-## Método 1: Editar o arquivo direto no servidor
-
-### 1. Conecte ao Console do Digital Ocean
-
-### 2. Vá para a pasta do projeto:
-```bash
-cd /var/www/premiacoes-admin
-```
-
-### 3. Edite o arquivo de login:
-```bash
-nano app/login/page.tsx
-```
-
-### 4. Substitua todo o conteúdo pelo novo (copie do arquivo local)
-
-### 5. Salve: Ctrl+O, Enter. Saia: Ctrl+X
-
-### 6. Rebuild e reinicie:
-```bash
-npm run build
-pm2 restart premiacoes-admin
-```
-
-### 7. Pronto! Acesse http://167.71.168.183:3000/login
+**Servidor:** 167.71.168.183  
+**URL:** http://167.71.168.183:3000
 
 ---
 
-## Método 2: Via Git (se conseguir fazer push)
+## Método 1: Atualizar via GitHub (recomendado)
 
-No seu PC:
+### No servidor (SSH):
+
 ```bash
+cd /var/www
+mv premiacoes-admin premiacoes-admin.old
+git clone https://github.com/Vitu242/premiacoes-admin.git
+cd premiacoes-admin
+bash scripts/deploy-ubuntu.sh
+pm2 restart premiacoes-admin
+```
+
+Ou, se a pasta já for um repositório Git:
+
+```bash
+cd /var/www/premiacoes-admin
+git pull origin main
+bash scripts/deploy-ubuntu.sh
+pm2 restart premiacoes-admin
+```
+
+---
+
+## Método 2: Antes de atualizar — enviar código para o GitHub (no PC)
+
+```powershell
 cd C:\Users\User\premiacoes-admin
 git add .
-git commit -m "Nova tela de login"
+git commit -m "Descrição da atualização"
 git push origin main
 ```
 
-No servidor:
+Depois execute o Método 1 no servidor.
+
+---
+
+## Método 3: Edição manual no servidor (rápido para pequenas mudanças)
+
 ```bash
 cd /var/www/premiacoes-admin
-git pull
-npm install
+nano caminho/do/arquivo
+# Edite, salve: Ctrl+O, Enter, saia: Ctrl+X
 npm run build
 pm2 restart premiacoes-admin
 ```
+
+---
+
+## Comandos úteis PM2
+
+| Comando | Descrição |
+|---------|-----------|
+| `pm2 status` | Ver status dos apps |
+| `pm2 restart premiacoes-admin` | Reiniciar o app |
+| `pm2 logs premiacoes-admin` | Ver logs |
