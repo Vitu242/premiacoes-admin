@@ -24,3 +24,14 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Garantir que inputs tenham texto e placeholder sempre visíveis */
+input,
+textarea,
+select {
+  color: #171717;
+}
+input::placeholder,
+textarea::placeholder {
+  color: #6b7280;
+}
