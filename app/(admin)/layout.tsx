@@ -4,8 +4,6 @@ import { useState } from "react";
 import AuthGuard from "../components/AuthGuard";
 import Sidebar from "../components/Sidebar";
 import MobileHeader from "../components/MobileHeader";
-import { SupabaseStatus } from "../components/SupabaseStatus";
-
 export default function AdminLayout({
   children,
 }: {
@@ -24,7 +22,6 @@ export default function AdminLayout({
           <MobileHeader onMenuClick={() => setSidebarOpen(true)} />
           <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
         </div>
-        <SupabaseStatus />
       </div>
     </AuthGuard>
   );

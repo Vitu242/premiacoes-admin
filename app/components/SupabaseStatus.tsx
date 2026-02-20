@@ -38,39 +38,29 @@ export function SupabaseStatus() {
     }
   };
 
+  const baseClass = "fixed bottom-4 right-4 z-[9999] rounded-lg px-4 py-2 text-sm font-medium text-white shadow-lg";
+
   if (status === "off") {
-    return (
-      <div className="fixed bottom-2 right-2 rounded bg-gray-500 px-3 py-1.5 text-xs text-white shadow">
-        Supabase: desligado (sem .env)
-      </div>
-    );
+    return <div className={baseClass + " bg-gray-600"}>Supabase: desligado</div>;
   }
 
   if (status === "erro") {
     return (
-      <div className="fixed bottom-2 right-2 flex items-center gap-2 rounded bg-red-600 px-3 py-1.5 text-xs text-white shadow">
-        <span>Supabase: erro de conexão</span>
-        <button onClick={handleSync} className="underline">
-          Tentar sincronizar
-        </button>
+      <div className={baseClass + " bg-red-600 flex items-center gap-2"}>
+        <span>Supabase: erro</span>
+        <button onClick={handleSync} className="underline">Sincronizar</button>
       </div>
     );
   }
 
   if (status === "ok") {
     return (
-      <div className="fixed bottom-2 right-2 flex items-center gap-2 rounded bg-green-600 px-3 py-1.5 text-xs text-white shadow">
-        <span>Supabase: conectado{count !== null ? ` (${count} cambistas)` : ""}</span>
-        <button onClick={handleSync} className="underline">
-          Sincronizar
-        </button>
+      <div className={baseClass + " bg-green-600 flex items-center gap-2"}>
+        <span>Conectado{count !== null ? ` (${count} cambistas)` : ""}</span>
+        <button onClick={handleSync} className="underline">Sincronizar</button>
       </div>
     );
   }
 
-  return (
-    <div className="fixed bottom-2 right-2 rounded bg-amber-500 px-3 py-1.5 text-xs text-white shadow">
-      Supabase: verificando...
-    </div>
-  );
+  return <div className={baseClass + " bg-amber-500"}>Verificando...</div>;
 }
