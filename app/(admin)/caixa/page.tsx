@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getCambistas, getGerentes } from "@/lib/store";
+import { getCambistas, getGerentes, calcularTotalCaixa } from "@/lib/store";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -27,7 +27,7 @@ export default function CaixaPage() {
     lancamentos: filtrar.reduce((a, c) => a + c.lancamentos, 0),
     saldo: filtrar.reduce((a, c) => a + c.saldo, 0),
   };
-  const totalPrestar = totalGeral.entrada - totalGeral.saidas - totalGeral.comissao + totalGeral.lancamentos;
+  const totalPrestar = calcularTotalCaixa(totalGeral);
 
   return (
     <div>
@@ -85,7 +85,7 @@ export default function CaixaPage() {
           </thead>
           <tbody className="divide-y divide-gray-200">
             {filtrar.map((c) => {
-              const total = c.entrada - c.saidas - c.comissao + c.lancamentos;
+              const total = calcularTotalCaixa(c);
               return (
                 <tr key={c.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium text-gray-800">{c.login}</td>

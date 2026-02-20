@@ -8,6 +8,8 @@ import {
   extracaoAceitaApostas,
   getCambistas,
   addBilhete,
+  podeRealizarVenda,
+  getSaldoDisponivel,
 } from "@/lib/store";
 import type { Extracao, ModalidadeBilhete, ItemBilhete } from "@/lib/types";
 
@@ -163,34 +165,78 @@ export default function ClienteVenderPage() {
     if (!extracao || !modalidade || !cambistaId || !cambista) return;
     const v = parseFloat(valor.replace(",", "."));
     if (isNaN(v) || v <= 0) return;
-    const item: ItemBilhete = {
-      modalidade,
-      numeros,
-      valor: v,
-      ...(milharBrinde.length === 4 && { milharBrinde }),
-    };
-    const bilhete = addBilhete({
-      cambistaId,
-      extracaoId: extracao.id,
-      extracaoNome: extracao.nome,
-      itens: [item],
-      total: v,
-      data: new Date().toLocaleString("pt-BR"),
-      situacao: "pendente",
-    });
-    setSucesso({ codigo: bilhete.codigo });
-    setStep("extracao");
-    setExtracao(null);
-    setModalidade(null);
-    setNumeros("");
-    setMilharBrinde("");
-    setValor("");
+
+    const check = podeRealizarVenda(cambistaId, v);
+    if (!check.ok) {
+      setErro(check.erro ?? "Saldo insuficiente.");
+      return;
+    }
+
+    try {
+      const item: ItemBilhete = {
+        modalidade,
+        numeros,
+        valor: v,
+        ...(milharBrinde.length === 4 && { milharBrinde }),
+      };
+      const bilhete = addBilhete({
+        cambistaId,
+        extracaoId: extracao.id,
+        extracaoNome: extracao.nome,
+        itens: [item],
+        total: v,
+        data: new Date().toLocaleString("pt-BR"),
+        situacao: "pendente",
+      });
+      setSucesso({ codigo: bilhete.codigo });
+      setStep("extracao");
+      setExtracao(null);
+      setModalidade(null);
+      setNumeros("");
+      setMilharBrinde("");
+      setValor("");
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao finalizar venda.");
+    }
   };
 
   if (!cambista) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-white">
         <p className="text-gray-500">Carregando...</p>
+      </div>
+    );
+  }
+
+  const saldoDisp = getSaldoDisponivel(cambista);
+  if (saldoDisp <= 0 && step === "extracao") {
+    return (
+      <div className="min-h-screen bg-white p-4 pb-24">
+        <div className="mb-4 flex items-center gap-2">
+          <button
+            onClick={() => router.push("/cliente")}
+            className="rounded p-2 text-gray-600 hover:bg-gray-100"
+            aria-label="Voltar"
+          >
+            <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <h1 className="text-lg font-bold text-gray-800">Vender</h1>
+        </div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
+          <p className="text-4xl mb-4">⚠️</p>
+          <h2 className="text-lg font-bold text-amber-800">Saldo zerado</h2>
+          <p className="mt-2 text-amber-700">
+            Você não tem limite disponível para realizar vendas. Peça ao administrador para adicionar saldo.
+          </p>
+          <button
+            onClick={() => router.push("/cliente")}
+            className="mt-6 w-full rounded-xl bg-amber-600 py-3 font-semibold text-white"
+          >
+            Voltar ao início
+          </button>
+        </div>
       </div>
     );
   }
@@ -357,12 +403,20 @@ export default function ClienteVenderPage() {
       )}
 
       {/* Step: Valor */}
-      {step === "valor" && (
+      {step === "valor" && cambista && (
         <div>
           <p className="mb-2 text-sm text-gray-500">
             {extracao?.nome} → {MODALIDADES.find((m) => m.id === modalidade)?.label} {numeros}
             {milharBrinde && <span className="text-green-600"> + Brinde {milharBrinde}</span>}
           </p>
+          <p className="mb-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">
+            Disponível para venda: <strong>{formatarMoeda(getSaldoDisponivel(cambista))}</strong>
+          </p>
+          {getSaldoDisponivel(cambista) <= 0 && (
+            <p className="mb-4 rounded-lg bg-red-50 p-2 text-sm text-red-600">
+              Saldo zerado. Peça ao administrador para adicionar limite antes de vender.
+            </p>
+          )}
           <p className="mb-2 text-gray-600">Valor da aposta (R$):</p>
           <input
             type="text"
@@ -377,7 +431,8 @@ export default function ClienteVenderPage() {
           </p>
           <button
             onClick={confirmarValor}
-            className="w-full rounded-xl bg-green-600 py-3 font-semibold text-white"
+            disabled={getSaldoDisponivel(cambista) <= 0}
+            className="w-full rounded-xl bg-green-600 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             Continuar
           </button>
@@ -385,8 +440,11 @@ export default function ClienteVenderPage() {
       )}
 
       {/* Step: Confirmar */}
-      {step === "confirmar" && (
+      {step === "confirmar" && cambista && (
         <div>
+          <div className="mb-4 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">
+            Disponível: <strong>{formatarMoeda(getSaldoDisponivel(cambista))}</strong>
+          </div>
           <div className="mb-6 rounded-xl border border-gray-200 p-4">
             <p className="text-sm text-gray-500">{extracao?.nome}</p>
             <p className="mt-1 font-medium">
@@ -397,7 +455,8 @@ export default function ClienteVenderPage() {
           </div>
           <button
             onClick={finalizarVenda}
-            className="w-full rounded-xl bg-green-600 py-4 font-semibold text-white"
+            disabled={!podeRealizarVenda(cambista.id, parseFloat(valor.replace(",", ".")) || 0).ok}
+            className="w-full rounded-xl bg-green-600 py-4 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             Finalizar venda
           </button>

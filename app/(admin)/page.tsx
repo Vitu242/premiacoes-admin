@@ -5,12 +5,9 @@ import {
   getCambistas,
   getGerentes,
   prestarContasCambista,
+  calcularTotalCaixa,
 } from "@/lib/store";
 import type { Cambista } from "@/lib/types";
-
-function calcularTotal(c: Cambista): number {
-  return c.entrada - c.saidas - c.comissao + c.lancamentos;
-}
 
 function formatarMoeda(valor: number) {
   return valor.toLocaleString("pt-BR", {
@@ -111,7 +108,7 @@ export default function PrestarContasPage() {
           </thead>
           <tbody className="divide-y divide-gray-200 bg-white">
             {filtrar.map((c) => {
-              const total = calcularTotal(c);
+              const total = calcularTotalCaixa(c);
               return (
                 <tr key={c.id} className="hover:bg-gray-50">
                   <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-900">
@@ -160,58 +157,60 @@ export default function PrestarContasPage() {
         </table>
       </div>
 
-      {/* Modal Prestar Contas - detalhe */}
+      {/* Modal Prestar Contas - detalhe (layout como na imagem: cabeçalho verde, Total = Entrada - Saídas - Comissão + Lançamentos) */}
       {detalhe && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-            <h2 className="mb-4 text-lg font-bold">
-              Prestar contas com {detalhe.login}
-            </h2>
-            <div className="space-y-2 rounded border border-gray-200 bg-gray-50 p-4">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Entrada:</span>
+          <div className="w-full max-w-md overflow-hidden rounded-lg bg-white shadow-xl">
+            <div className="bg-green-600 px-6 py-4">
+              <h2 className="text-lg font-bold text-white">
+                Prestar contas com {detalhe.login}
+              </h2>
+            </div>
+            <div className="space-y-2 p-6">
+              <div className="flex justify-between text-slate-800">
+                <span>Entrada</span>
                 <span>{formatarMoeda(detalhe.entrada)}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Saídas:</span>
+              <div className="flex justify-between text-slate-800">
+                <span>Saídas</span>
                 <span>{formatarMoeda(detalhe.saidas)}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Comissão:</span>
+              <div className="flex justify-between text-slate-800">
+                <span>Comissão</span>
                 <span>{formatarMoeda(detalhe.comissao)}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Lançamentos:</span>
+              <div className="flex justify-between text-slate-800">
+                <span>Lançamentos</span>
                 <span>{formatarMoeda(detalhe.lancamentos)}</span>
               </div>
-              <div className="flex justify-between border-t pt-2 font-semibold">
-                <span>Total:</span>
+              <div className="flex justify-between border-t border-gray-200 pt-2 font-semibold text-slate-800">
+                <span>Total</span>
                 <span
                   className={
-                    calcularTotal(detalhe) > 0
+                    calcularTotalCaixa(detalhe) > 0
                       ? "text-green-600"
-                      : calcularTotal(detalhe) < 0
+                      : calcularTotalCaixa(detalhe) < 0
                         ? "text-red-600"
-                        : ""
+                        : "text-slate-800"
                   }
                 >
-                  {formatarMoeda(calcularTotal(detalhe))}
+                  {formatarMoeda(calcularTotalCaixa(detalhe))}
                 </span>
               </div>
             </div>
-            <p className="mt-3 text-sm text-gray-600">
+            <p className="mt-3 text-sm text-slate-600">
               Ao confirmar, o caixa deste cliente será zerado.
             </p>
-            <div className="mt-4 flex gap-3">
+            <div className="mt-4">
               <button
                 onClick={() => handlePrestarContas(detalhe.id)}
-                className="rounded bg-orange-500 px-4 py-2 font-medium text-white hover:bg-orange-600"
+                className="w-full rounded-lg bg-green-600 px-4 py-3 font-medium text-white hover:bg-green-700"
               >
                 Prestar contas
               </button>
               <button
                 onClick={() => setDetalhe(null)}
-                className="rounded border border-gray-300 px-4 py-2 hover:bg-gray-50"
+                className="mt-2 w-full rounded border border-gray-300 px-4 py-2 text-slate-800 hover:bg-gray-50"
               >
                 Cancelar
               </button>

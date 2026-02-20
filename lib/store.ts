@@ -1,6 +1,7 @@
 "use client";
 
 import type { Gerente, Cambista, Extracao, Bilhete, Lancamento, Resultado } from "./types";
+import { pushToSupabase, useSupabase } from "./sync-supabase";
 
 const GERENTES_KEY = "premiacoes_gerentes";
 const CAMBISTAS_KEY = "premiacoes_cambistas";
@@ -29,6 +30,7 @@ function loadGerentes(): Gerente[] {
 function saveGerentes(gerentes: Gerente[]) {
   if (typeof window !== "undefined") {
     localStorage.setItem(GERENTES_KEY, JSON.stringify(gerentes));
+    if (useSupabase) void pushToSupabase("gerentes", gerentes);
   }
 }
 
@@ -45,6 +47,7 @@ function loadCambistas(): Cambista[] {
 function saveCambistas(cambistas: Cambista[]) {
   if (typeof window !== "undefined") {
     localStorage.setItem(CAMBISTAS_KEY, JSON.stringify(cambistas));
+    if (useSupabase) void pushToSupabase("cambistas", cambistas);
   }
 }
 
@@ -220,6 +223,7 @@ function loadExtracoes(): Extracao[] {
 function saveExtracoes(e: Extracao[]) {
   if (typeof window !== "undefined") {
     localStorage.setItem(EXTRACOES_KEY, JSON.stringify(e));
+    if (useSupabase) void pushToSupabase("extracoes", e);
   }
 }
 
@@ -293,6 +297,26 @@ export function getTempoCancelamentoMinutos(): number {
   return loadConfig().tempoCancelamentoMinutos;
 }
 
+/** Saldo disponível para vendas = limite (saldo) - já vendido (entrada). Se zerado, cambista não pode vender. */
+export function getSaldoDisponivel(cambista: Cambista): number {
+  return Math.max(0, cambista.saldo - cambista.entrada);
+}
+
+/** Total a prestar = Entrada - Saídas - Comissão + Lançamentos (fórmula do caixa) */
+export function calcularTotalCaixa(c: Pick<Cambista, "entrada" | "saidas" | "comissao" | "lancamentos">): number {
+  return c.entrada - c.saidas - c.comissao + c.lancamentos;
+}
+
+/** Verifica se o cambista pode realizar uma venda do valor informado (tem saldo disponível). */
+export function podeRealizarVenda(cambistaId: string, valor: number): { ok: boolean; saldoDisponivel: number; erro?: string } {
+  const cam = getCambistas().find((c) => c.id === cambistaId);
+  if (!cam) return { ok: false, saldoDisponivel: 0, erro: "Cambista não encontrado." };
+  if (cam.saldo <= 0) return { ok: false, saldoDisponivel: 0, erro: "Saldo zerado. Peça ao administrador para adicionar limite." };
+  const disp = getSaldoDisponivel(cam);
+  if (valor > disp) return { ok: false, saldoDisponivel: disp, erro: `Saldo insuficiente. Disponível: R$ ${disp.toFixed(2).replace(".", ",")}` };
+  return { ok: true, saldoDisponivel: disp };
+}
+
 /** Verifica se o bilhete pode ser cancelado (tempo admin + extração não encerrou) */
 export function podeCancelarBilhete(
   bilhete: Bilhete,
@@ -321,6 +345,7 @@ function loadBilhetes(): Bilhete[] {
 function saveBilhetes(b: Bilhete[]) {
   if (typeof window !== "undefined") {
     localStorage.setItem(BILHETES_KEY, JSON.stringify(b));
+    if (useSupabase) void pushToSupabase("bilhetes", b);
   }
 }
 
@@ -329,6 +354,9 @@ export function getBilhetes(): Bilhete[] {
 }
 
 export function addBilhete(b: Omit<Bilhete, "id" | "codigo">): Bilhete {
+  const check = podeRealizarVenda(b.cambistaId, b.total);
+  if (!check.ok) throw new Error(check.erro ?? "Saldo insuficiente para esta venda.");
+
   const lista = getBilhetes();
   const codigo = String(Date.now()).slice(-11);
   const novo: Bilhete = {
@@ -338,9 +366,14 @@ export function addBilhete(b: Omit<Bilhete, "id" | "codigo">): Bilhete {
   };
   lista.push(novo);
   saveBilhetes(lista);
-  updateCambista(b.cambistaId, {
-    entrada: (getCambistas().find((c) => c.id === b.cambistaId)?.entrada ?? 0) + b.total,
-  });
+  const cam = getCambistas().find((c) => c.id === b.cambistaId);
+  if (cam) {
+    const comissaoBilhete = calcularComissaoBilhete(novo, cam);
+    updateCambista(b.cambistaId, {
+      entrada: (cam.entrada ?? 0) + b.total,
+      comissao: (cam.comissao ?? 0) + comissaoBilhete,
+    });
+  }
   return novo;
 }
 
@@ -366,7 +399,11 @@ export function cancelarBilhete(id: string): boolean {
   const b = lista[idx];
   const cam = getCambistas().find((c) => c.id === b.cambistaId);
   if (cam) {
-    updateCambista(b.cambistaId, { entrada: Math.max(0, cam.entrada - b.total) });
+    const comissaoBilhete = calcularComissaoBilhete(b, cam);
+    updateCambista(b.cambistaId, {
+      entrada: Math.max(0, cam.entrada - b.total),
+      comissao: Math.max(0, (cam.comissao ?? 0) - comissaoBilhete),
+    });
   }
   return true;
 }
@@ -383,7 +420,10 @@ function loadLancamentos(): Lancamento[] {
 }
 
 function saveLancamentos(l: Lancamento[]) {
-  if (typeof window !== "undefined") localStorage.setItem(LANCAMENTOS_KEY, JSON.stringify(l));
+  if (typeof window !== "undefined") {
+    localStorage.setItem(LANCAMENTOS_KEY, JSON.stringify(l));
+    if (useSupabase) void pushToSupabase("lancamentos", l);
+  }
 }
 
 export function getLancamentos(): Lancamento[] {
@@ -418,7 +458,10 @@ function loadResultados(): Resultado[] {
 }
 
 function saveResultados(r: Resultado[]) {
-  if (typeof window !== "undefined") localStorage.setItem(RESULTADOS_KEY, JSON.stringify(r));
+  if (typeof window !== "undefined") {
+    localStorage.setItem(RESULTADOS_KEY, JSON.stringify(r));
+    if (useSupabase) void pushToSupabase("resultados", r);
+  }
 }
 
 export function getResultados(): Resultado[] {

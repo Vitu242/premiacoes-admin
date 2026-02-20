@@ -31,6 +31,7 @@ export default function ClienteDashboardPage() {
     id: string;
     login: string;
     saldo: number;
+    entrada: number;
   } | null>(null);
   const [codigo, setCodigo] = useState("");
 
@@ -44,7 +45,7 @@ export default function ClienteDashboardPage() {
     setCodigo(c || "");
     const cambistas = getCambistas();
     const cam = cambistas.find((x) => x.id === cambistaId);
-    if (cam) setCambista({ id: cam.id, login: cam.login, saldo: cam.saldo });
+    if (cam) setCambista({ id: cam.id, login: cam.login, saldo: cam.saldo, entrada: cam.entrada });
   }, [router]);
 
   const handleSair = () => {
@@ -82,27 +83,43 @@ export default function ClienteDashboardPage() {
         </Link>
       </header>
 
-      {/* Card Saldo */}
-      <div className="mx-4 mt-4 rounded-xl bg-gray-100 p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-gray-500">Saldo</p>
-            <p className="text-2xl font-bold text-gray-800">
-              {formatarMoeda(cambista.saldo)}
-            </p>
+      {/* Card Saldo / Disponível */}
+      {(() => {
+        const disp = Math.max(0, cambista.saldo - cambista.entrada);
+        const semLimite = disp <= 0;
+        return (
+          <div className={`mx-4 mt-4 rounded-xl p-4 ${semLimite ? "bg-amber-50 border border-amber-200" : "bg-gray-100"}`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">Disponível para vendas</p>
+                <p className={`text-2xl font-bold ${semLimite ? "text-amber-700" : "text-gray-800"}`}>
+                  {formatarMoeda(disp)}
+                </p>
+                {semLimite && (
+                  <p className="mt-1 text-xs text-amber-700">Saldo zerado. Peça ao admin para adicionar limite.</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-green-500"></span>
+                <span className="text-sm text-gray-600">Online</span>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-green-500"></span>
-            <span className="text-sm text-gray-600">Online</span>
-          </div>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* Botão Vender (destaque) - gradiente verde */}
       <div className="mx-4 mt-4">
         <Link
           href="/cliente/vender"
-          className="flex w-full items-center justify-center gap-3 rounded-xl bg-gradient-to-r from-green-600 to-green-500 py-4 font-semibold text-white shadow-md transition-opacity hover:opacity-95"
+          className={`flex w-full items-center justify-center gap-3 rounded-xl py-4 font-semibold text-white shadow-md transition-opacity ${
+            Math.max(0, cambista.saldo - cambista.entrada) <= 0
+              ? "cursor-not-allowed bg-gray-400 opacity-75"
+              : "bg-gradient-to-r from-green-600 to-green-500 hover:opacity-95"
+          }`}
+          onClick={(e) => {
+            if (Math.max(0, cambista.saldo - cambista.entrada) <= 0) e.preventDefault();
+          }}
         >
           <span className="text-2xl">💵</span>
           Vender

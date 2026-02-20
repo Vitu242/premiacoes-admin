@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getCambistas } from "@/lib/store";
+import { getCambistas, calcularTotalCaixa } from "@/lib/store";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -44,7 +44,7 @@ export default function ClienteCaixaPage() {
     );
   }
 
-  const total = cambista.entrada - cambista.saidas - cambista.comissao + cambista.lancamentos;
+  const total = calcularTotalCaixa(cambista);
 
   return (
     <div className="min-h-screen bg-white p-4 pb-24">

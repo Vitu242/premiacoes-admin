@@ -57,8 +57,11 @@ export default function SaldoPage() {
 
       {cambista && (
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-          <p className="text-sm text-gray-500">Saldo atual</p>
+          <p className="text-sm text-gray-500">Limite (saldo) – o que o cambista pode vender</p>
           <p className="text-3xl font-bold text-gray-800">{formatarMoeda(cambista.saldo)}</p>
+          <p className="mt-2 text-sm text-gray-500">
+            Já vendido: {formatarMoeda(cambista.entrada)} • Disponível: {formatarMoeda(Math.max(0, cambista.saldo - cambista.entrada))}
+          </p>
           <div className="mt-6 flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-2">
               <button
