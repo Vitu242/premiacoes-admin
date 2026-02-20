@@ -13,18 +13,21 @@ export function SupabaseStatus() {
       setStatus("off");
       return;
     }
-    supabase
-      .from("cambistas")
-      .select("*", { count: "exact", head: true })
-      .then(({ count: c, error }) => {
+    void (async () => {
+      try {
+        const { count: c, error } = await supabase
+          .from("cambistas")
+          .select("*", { count: "exact", head: true });
         if (error) {
           setStatus("erro");
           return;
         }
         setStatus("ok");
         setCount(c ?? 0);
-      })
-      .catch(() => setStatus("erro"));
+      } catch {
+        setStatus("erro");
+      }
+    })();
   }, []);
 
   const handleSync = async () => {
