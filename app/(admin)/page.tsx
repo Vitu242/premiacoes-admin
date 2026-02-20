@@ -157,51 +157,52 @@ export default function PrestarContasPage() {
         </table>
       </div>
 
-      {/* Modal Prestar Contas - detalhe (layout como na imagem: cabeçalho verde, Total = Entrada - Saídas - Comissão + Lançamentos) */}
+      {/* Modal Prestar Contas - detalhe (texto sempre visível, cor forçada) */}
       {detalhe && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md overflow-hidden rounded-lg bg-white shadow-xl">
+          <div className="w-full max-w-md overflow-hidden rounded-lg bg-white shadow-xl [color:#171717]">
             <div className="bg-green-600 px-6 py-4">
               <h2 className="text-lg font-bold text-white">
                 Prestar contas com {detalhe.login}
               </h2>
             </div>
-            <div className="space-y-2 p-6">
-              <div className="flex justify-between text-slate-800">
+            <div className="space-y-2 p-6 [color:#171717]">
+              <div className="flex justify-between">
                 <span>Entrada</span>
                 <span>{formatarMoeda(detalhe.entrada)}</span>
               </div>
-              <div className="flex justify-between text-slate-800">
+              <div className="flex justify-between">
                 <span>Saídas</span>
                 <span>{formatarMoeda(detalhe.saidas)}</span>
               </div>
-              <div className="flex justify-between text-slate-800">
+              <div className="flex justify-between">
                 <span>Comissão</span>
                 <span>{formatarMoeda(detalhe.comissao)}</span>
               </div>
-              <div className="flex justify-between text-slate-800">
+              <div className="flex justify-between">
                 <span>Lançamentos</span>
                 <span>{formatarMoeda(detalhe.lancamentos)}</span>
               </div>
-              <div className="flex justify-between border-t border-gray-200 pt-2 font-semibold text-slate-800">
+              <div className="flex justify-between border-t border-gray-200 pt-2 font-semibold">
                 <span>Total</span>
                 <span
-                  className={
-                    calcularTotalCaixa(detalhe) > 0
-                      ? "text-green-600"
-                      : calcularTotalCaixa(detalhe) < 0
-                        ? "text-red-600"
-                        : "text-slate-800"
-                  }
+                  style={{
+                    color:
+                      calcularTotalCaixa(detalhe) > 0
+                        ? "#16a34a"
+                        : calcularTotalCaixa(detalhe) < 0
+                          ? "#dc2626"
+                          : "#171717",
+                  }}
                 >
                   {formatarMoeda(calcularTotalCaixa(detalhe))}
                 </span>
               </div>
             </div>
-            <p className="mt-3 text-sm text-slate-600">
+            <p className="mt-3 px-6 text-sm [color:#374151]">
               Ao confirmar, o caixa deste cliente será zerado.
             </p>
-            <div className="mt-4">
+            <div className="mt-4 px-6 pb-6">
               <button
                 onClick={() => handlePrestarContas(detalhe.id)}
                 className="w-full rounded-lg bg-green-600 px-4 py-3 font-medium text-white hover:bg-green-700"
@@ -210,7 +211,7 @@ export default function PrestarContasPage() {
               </button>
               <button
                 onClick={() => setDetalhe(null)}
-                className="mt-2 w-full rounded border border-gray-300 px-4 py-2 text-slate-800 hover:bg-gray-50"
+                className="mt-2 w-full rounded border border-gray-300 px-4 py-2 hover:bg-gray-50 [color:#171717]"
               >
                 Cancelar
               </button>

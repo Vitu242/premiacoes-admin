@@ -47,7 +47,10 @@ function loadCambistas(): Cambista[] {
 function saveCambistas(cambistas: Cambista[]) {
   if (typeof window !== "undefined") {
     localStorage.setItem(CAMBISTAS_KEY, JSON.stringify(cambistas));
-    if (useSupabase) void pushToSupabase("cambistas", cambistas);
+    if (useSupabase) {
+      void pushToSupabase("gerentes", loadGerentes());
+      void pushToSupabase("cambistas", cambistas);
+    }
   }
 }
 

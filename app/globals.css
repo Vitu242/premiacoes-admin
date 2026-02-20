@@ -35,3 +35,8 @@ input::placeholder,
 textarea::placeholder {
   color: #6b7280;
 }
+
+/* Modais/cards brancos: texto base sempre escuro (ignora dark mode) */
+[class*="rounded-lg"][class*="bg-white"][class*="shadow"] {
+  color: #171717;
+}

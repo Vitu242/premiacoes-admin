@@ -148,7 +148,7 @@ export async function initFromSupabase(): Promise<boolean> {
       if (val) write(KEYS.config, val);
     }
 
-    // Se Supabase estava vazio mas temos dados locais, envia-os para unificar
+    // Se Supabase estava vazio mas temos dados locais, envia-os (ordem: gerentes antes de cambistas por FK)
     const local = (key: string) => {
       try {
         const s = localStorage.getItem(key);
@@ -157,8 +157,8 @@ export async function initFromSupabase(): Promise<boolean> {
         return [];
       }
     };
-    if (!cambistasRes.data?.length && local(KEYS.cambistas).length) await pushToSupabase("cambistas", local(KEYS.cambistas));
     if (!gerentesRes.data?.length && local(KEYS.gerentes).length) await pushToSupabase("gerentes", local(KEYS.gerentes));
+    if (!cambistasRes.data?.length && local(KEYS.cambistas).length) await pushToSupabase("cambistas", local(KEYS.cambistas));
     if (!extracoesRes.data?.length && local(KEYS.extracoes).length) await pushToSupabase("extracoes", local(KEYS.extracoes));
     if (!bilhetesRes.data?.length && local(KEYS.bilhetes).length) await pushToSupabase("bilhetes", local(KEYS.bilhetes));
     if (!lancamentosRes.data?.length && local(KEYS.lancamentos).length) await pushToSupabase("lancamentos", local(KEYS.lancamentos));
@@ -201,9 +201,10 @@ export async function pushToSupabase(
       }
       return r;
     });
-    await supabase.from(table).upsert(dbRows);
-  } catch {
-    // falha silenciosa ao enviar
+    const { error } = await supabase.from(table).upsert(dbRows);
+    if (error) console.error("[Supabase] Erro ao enviar " + table + ":", error.message);
+  } catch (e) {
+    console.error("[Supabase] Erro ao enviar " + table + ":", e);
   }
 }
 
