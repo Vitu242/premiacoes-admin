@@ -177,7 +177,7 @@ export async function pushToSupabase(
 ): Promise<void> {
   if (!supabase || !rows.length) return;
   try {
-    const dbRows = rows.map((r: Record<string, unknown>) => {
+    const dbRows = rows.map((r: unknown) => {
       if (table === "cambistas") return toDbCambista(r as unknown as Cambista);
       if (table === "bilhetes") {
         const b = r as unknown as Bilhete;
