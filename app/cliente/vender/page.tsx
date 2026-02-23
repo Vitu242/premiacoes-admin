@@ -103,7 +103,7 @@ export default function ClienteVenderPage() {
     else if (step === "variante") { setStep("modalidade"); setModalidadeGroupIndex(null); }
     else if (step === "numeros") {
       const idx = indexComVariante();
-      if (idx >= 0) { setStep("variante"); setModalidadeGroupIndex(idx); } else setStep("modalidade");
+      if (idx !== null && idx >= 0) { setStep("variante"); setModalidadeGroupIndex(idx); } else setStep("modalidade");
     } else if (step === "premio") setStep("numeros");
     else if (step === "milharBrinde") setStep("premio");
     else if (step === "valor") {
