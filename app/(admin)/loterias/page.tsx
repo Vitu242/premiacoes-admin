@@ -50,7 +50,7 @@ export default function LoteriasPage() {
   };
 
   const restaurarPadrao = () => {
-    if (!confirm("Substituir a lista atual pela lista padrão de 50 loterias? As alterações manuais serão perdidas.")) return;
+    if (!confirm("Substituir a lista atual pela lista padrão de 55 loterias? As alterações manuais serão perdidas.")) return;
     setExtracoes(getExtracoesPadrao());
     setExtracoesState(getExtracoes());
     setEditando(null);
@@ -94,7 +94,7 @@ export default function LoteriasPage() {
           onClick={restaurarPadrao}
           className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
         >
-          Restaurar lista padrão (50 loterias)
+          Restaurar lista padrão (55 loterias)
         </button>
       </div>
 

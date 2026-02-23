@@ -62,9 +62,17 @@ export async function initFromSupabase(): Promise<boolean> {
     const write = (key: string, data: unknown) => {
       localStorage.setItem(key, JSON.stringify(data ?? []));
     };
+    const local = (key: string): unknown[] => {
+      try {
+        const s = localStorage.getItem(key);
+        return s ? JSON.parse(s) : [];
+      } catch {
+        return [];
+      }
+    };
 
-    if (gerentesRes.data?.length) write(KEYS.gerentes, gerentesRes.data.map((r: Record<string, unknown>) => ({
-      id: r.id,
+    const mapGerente = (r: Record<string, unknown>) => ({
+      id: String(r.id ?? ""),
       codigo: r.codigo ?? "default",
       login: r.login,
       senha: r.senha,
@@ -79,10 +87,9 @@ export async function initFromSupabase(): Promise<boolean> {
       status: r.status ?? "ativo",
       socio: r.socio ?? "",
       criadoEm: r.criado_em ?? "",
-    })));
-
-    if (cambistasRes.data?.length) write(KEYS.cambistas, cambistasRes.data.map((r: Record<string, unknown>) => ({
-      id: r.id,
+    });
+    const mapCambista = (r: Record<string, unknown>) => ({
+      id: String(r.id ?? ""),
       gerenteId: r.gerente_id ?? "",
       codigo: r.codigo ?? "default",
       login: r.login ?? "",
@@ -108,7 +115,21 @@ export async function initFromSupabase(): Promise<boolean> {
       lancamentos: Number(r.lancamentos ?? 0),
       ultimaPrestacao: r.ultima_prestacao ?? null,
       cotacoes: r.cotacoes != null && typeof r.cotacoes === "object" ? r.cotacoes : undefined,
-    })));
+    });
+
+    if (gerentesRes.data?.length) {
+      const fromSupabase = gerentesRes.data.map((r: Record<string, unknown>) => mapGerente(r));
+      const idsSupabase = new Set(fromSupabase.map((g: { id: string }) => g.id));
+      const locais = (local(KEYS.gerentes) as { id: string }[]).filter((g) => !idsSupabase.has(g.id));
+      write(KEYS.gerentes, [...fromSupabase, ...locais]);
+    }
+
+    if (cambistasRes.data?.length) {
+      const fromSupabase = cambistasRes.data.map((r: Record<string, unknown>) => mapCambista(r));
+      const idsSupabase = new Set(fromSupabase.map((c: { id: string }) => c.id));
+      const locais = (local(KEYS.cambistas) as { id: string }[]).filter((c) => !idsSupabase.has(c.id));
+      write(KEYS.cambistas, [...fromSupabase, ...locais]);
+    }
 
     if (extracoesRes.data?.length) write(KEYS.extracoes, extracoesRes.data.map((r: Record<string, unknown>) => ({
       id: r.id,
@@ -155,14 +176,6 @@ export async function initFromSupabase(): Promise<boolean> {
     }
 
     // Se Supabase estava vazio mas temos dados locais, envia-os (ordem: gerentes antes de cambistas por FK)
-    const local = (key: string) => {
-      try {
-        const s = localStorage.getItem(key);
-        return s ? JSON.parse(s) : [];
-      } catch {
-        return [];
-      }
-    };
     if (!gerentesRes.data?.length && local(KEYS.gerentes).length) await pushToSupabase("gerentes", local(KEYS.gerentes));
     if (!cambistasRes.data?.length && local(KEYS.cambistas).length) await pushToSupabase("cambistas", local(KEYS.cambistas));
     if (!extracoesRes.data?.length && local(KEYS.extracoes).length) await pushToSupabase("extracoes", local(KEYS.extracoes));
