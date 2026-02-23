@@ -31,6 +31,7 @@ function toCambista(row: Record<string, unknown>): Cambista {
     comissao: Number(row.comissao ?? 0),
     lancamentos: Number(row.lancamentos ?? 0),
     ultimaPrestacao: row.ultima_prestacao ? String(row.ultima_prestacao) : null,
+    cotacoes: row.cotacoes != null && typeof row.cotacoes === "object" ? (row.cotacoes as Cambista["cotacoes"]) : undefined,
   };
 }
 
@@ -80,6 +81,7 @@ export async function fetchGerentes(): Promise<Gerente[]> {
   if (error) throw error;
   return (data ?? []).map((r: Record<string, unknown>) => ({
     id: String(r.id),
+    codigo: String(r.codigo ?? "default"),
     login: String(r.login ?? ""),
     senha: String(r.senha ?? ""),
     tipo: String(r.tipo ?? ""),
@@ -121,6 +123,7 @@ export async function fetchResultados(): Promise<Resultado[]> {
     data: String(r.data ?? ""),
     grupos: String(r.grupos ?? ""),
     dezenas: r.dezenas ? String(r.dezenas) : undefined,
+    premios: r.premios != null && typeof r.premios === "object" ? (r.premios as Resultado["premios"]) : undefined,
   }));
 }
 
@@ -129,6 +132,7 @@ export async function upsertCambista(c: Cambista): Promise<void> {
   await supabase.from("cambistas").upsert({
     id: c.id,
     gerente_id: c.gerenteId,
+    codigo: c.codigo ?? "default",
     login: c.login,
     senha: c.senha,
     saldo: c.saldo,
@@ -151,6 +155,7 @@ export async function upsertCambista(c: Cambista): Promise<void> {
     comissao: c.comissao,
     lancamentos: c.lancamentos,
     ultima_prestacao: c.ultimaPrestacao,
+    cotacoes: c.cotacoes ?? null,
   });
 }
 
