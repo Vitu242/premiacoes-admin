@@ -505,7 +505,7 @@ export default function ClienteVenderPage() {
       {step === "premio" && (
         <div>
           <p className="mb-2 text-sm text-gray-500">
-            {extracao?.nome} → {(COTACOES_LABELS[modalidade] ?? modalidade)} {numeros}
+            {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros}
           </p>
           <p className="mb-4 text-gray-600">Em qual(is) prêmio(s) vale este jogo?</p>
           <div className="mb-4 grid grid-cols-4 gap-2">
@@ -535,7 +535,7 @@ export default function ClienteVenderPage() {
       {step === "milharBrinde" && cambista?.milharBrinde === "sim" && (
         <div>
           <p className="mb-2 text-sm text-gray-500">
-            {extracao?.nome} → {(COTACOES_LABELS[modalidade] ?? modalidade)} {numeros}
+            {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros}
           </p>
           <p className="mb-4 text-gray-600">Milhar brinde (opcional) – 4 dígitos:</p>
           <div className="mb-4 flex h-14 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-50 text-2xl font-mono font-bold">
@@ -574,7 +574,7 @@ export default function ClienteVenderPage() {
       {step === "valor" && cambista && (
         <div>
           <p className="mb-2 text-sm text-gray-500">
-            {extracao?.nome} → {(COTACOES_LABELS[modalidade] ?? modalidade)} {numeros} — prêmio {premio}
+            {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros} — prêmio {premio}
             {milharBrinde && <span className="text-green-600"> + Brinde {milharBrinde}</span>}
           </p>
           <p className="mb-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">
@@ -616,7 +616,7 @@ export default function ClienteVenderPage() {
           <div className="mb-6 rounded-xl border border-gray-200 p-4">
             <p className="text-sm text-gray-500">{extracao?.nome}</p>
             <p className="mt-1 font-medium">
-              {(COTACOES_LABELS[modalidade] ?? modalidade)} {numeros} (prêmio {premio})
+              {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros} (prêmio {premio})
               {milharBrinde && <span className="text-green-600"> + Brinde {milharBrinde}</span>}
               {" – "}{formatarMoeda(parseFloat(valor.replace(",", ".")))}
             </p>
