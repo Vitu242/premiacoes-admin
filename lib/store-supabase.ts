@@ -8,6 +8,7 @@ function toCambista(row: Record<string, unknown>): Cambista {
   return {
     id: String(row.id),
     gerenteId: String(row.gerente_id ?? ""),
+    codigo: String(row.codigo ?? "default"),
     login: String(row.login ?? ""),
     senha: String(row.senha ?? ""),
     saldo: Number(row.saldo ?? 0),
