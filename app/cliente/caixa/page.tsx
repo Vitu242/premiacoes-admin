@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getCambistas, calcularTotalCaixa } from "@/lib/store";
+import { getCambistas, calcularTotalCaixa, getJogosEmAberto } from "@/lib/store";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -11,6 +11,7 @@ function formatarMoeda(v: number) {
 
 export default function ClienteCaixaPage() {
   const router = useRouter();
+  const [cambistaId, setCambistaId] = useState<string | null>(null);
   const [cambista, setCambista] = useState<{
     entrada: number;
     saidas: number;
@@ -24,8 +25,9 @@ export default function ClienteCaixaPage() {
       router.replace("/cliente/login");
       return;
     }
-    const { cambistaId } = JSON.parse(auth);
-    const cam = getCambistas().find((c) => c.id === cambistaId);
+    const { cambistaId: cid } = JSON.parse(auth);
+    setCambistaId(cid);
+    const cam = getCambistas().find((c) => c.id === cid);
     if (cam) {
       setCambista({
         entrada: cam.entrada,
@@ -35,6 +37,8 @@ export default function ClienteCaixaPage() {
       });
     }
   }, [router]);
+
+  const jogosAberto = cambistaId ? getJogosEmAberto(cambistaId) : 0;
 
   if (!cambista) {
     return (
@@ -57,13 +61,21 @@ export default function ClienteCaixaPage() {
         <h1 className="text-lg font-bold text-gray-800">Caixa</h1>
       </div>
 
+      <p className="mb-3 text-sm text-gray-500">
+        Jogos em aberto = valor apostado ainda sem resultado. Saídas = prêmios já pagos (após sair o resultado).
+      </p>
+
       <div className="space-y-3">
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+          <p className="text-sm text-gray-600">Jogos em aberto</p>
+          <p className="text-xl font-bold text-blue-700">{formatarMoeda(jogosAberto)}</p>
+        </div>
         <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
           <p className="text-sm text-gray-500">Entrada</p>
           <p className="text-xl font-bold text-green-700">{formatarMoeda(cambista.entrada)}</p>
         </div>
         <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-          <p className="text-sm text-gray-500">Saídas</p>
+          <p className="text-sm text-gray-500">Saídas (prêmios pagos)</p>
           <p className="text-xl font-bold text-red-700">{formatarMoeda(cambista.saidas)}</p>
         </div>
         <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">

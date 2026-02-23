@@ -4,6 +4,7 @@
 -- Gerentes
 CREATE TABLE IF NOT EXISTS gerentes (
   id TEXT PRIMARY KEY,
+  codigo TEXT DEFAULT 'default',
   login TEXT NOT NULL,
   senha TEXT NOT NULL,
   tipo TEXT,
@@ -24,6 +25,7 @@ CREATE TABLE IF NOT EXISTS gerentes (
 CREATE TABLE IF NOT EXISTS cambistas (
   id TEXT PRIMARY KEY,
   gerente_id TEXT REFERENCES gerentes(id),
+  codigo TEXT DEFAULT 'default',
   login TEXT NOT NULL,
   senha TEXT NOT NULL,
   saldo NUMERIC DEFAULT 0,
@@ -46,6 +48,7 @@ CREATE TABLE IF NOT EXISTS cambistas (
   comissao NUMERIC DEFAULT 0,
   lancamentos NUMERIC DEFAULT 0,
   ultima_prestacao TEXT,
+  cotacoes JSONB,
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -83,7 +86,7 @@ CREATE TABLE IF NOT EXISTS lancamentos (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Resultados
+-- Resultados (premios: JSONB com 1..10 = grupos do 1º ao 10º prêmio)
 CREATE TABLE IF NOT EXISTS resultados (
   id TEXT PRIMARY KEY,
   extracao_id TEXT,
@@ -91,6 +94,7 @@ CREATE TABLE IF NOT EXISTS resultados (
   data TEXT,
   grupos TEXT,
   dezenas TEXT,
+  premios JSONB,
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -128,3 +132,9 @@ CREATE POLICY "Allow all lancamentos" ON lancamentos FOR ALL USING (true) WITH C
 CREATE POLICY "Allow all resultados" ON resultados FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all config" ON config FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all admin_credenciais" ON admin_credenciais FOR ALL USING (true) WITH CHECK (true);
+
+-- Se as tabelas já existiam sem codigo, execute no SQL Editor:
+-- ALTER TABLE gerentes ADD COLUMN IF NOT EXISTS codigo TEXT DEFAULT 'default';
+-- ALTER TABLE cambistas ADD COLUMN IF NOT EXISTS codigo TEXT DEFAULT 'default';
+-- ALTER TABLE cambistas ADD COLUMN IF NOT EXISTS cotacoes JSONB;
+-- ALTER TABLE resultados ADD COLUMN IF NOT EXISTS premios JSONB;

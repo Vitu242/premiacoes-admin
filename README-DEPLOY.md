@@ -4,6 +4,58 @@ Guia para publicar o Premiacoes Admin no seu servidor.
 
 ---
 
+## Subir para testar (resumo rápido)
+
+**1. No seu PC (PowerShell), envie o projeto para o servidor:**
+
+```powershell
+cd C:\Users\User\premiacoes-admin
+scp -r . root@SEU_IP_DROPLET:/var/www/premiacoes-admin
+```
+
+Substitua `SEU_IP_DROPLET` pelo IP do seu Droplet (ex.: `164.92.xxx.xxx`).
+
+**2. Crie o arquivo de ambiente no servidor (Supabase):**
+
+Conecte por SSH e crie o `.env.local` com as variáveis do Supabase:
+
+```bash
+ssh root@SEU_IP_DROPLET
+mkdir -p /var/www/premiacoes-admin
+cd /var/www/premiacoes-admin
+nano .env.local
+```
+
+Cole (e ajuste com suas chaves):
+
+```
+NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-chave-anon
+```
+
+Salve (Ctrl+O, Enter, Ctrl+X).
+
+**3. Rode o deploy no servidor:**
+
+```bash
+cd /var/www/premiacoes-admin/scripts
+chmod +x deploy-ubuntu.sh
+bash deploy-ubuntu.sh
+```
+
+**4. Acesse:** `http://SEU_IP_DROPLET:3000` (ou configure Nginx para porta 80; veja abaixo).
+
+Para **atualizar** depois de mudar o código: envie de novo com `scp` e no servidor:
+
+```bash
+cd /var/www/premiacoes-admin
+npm install
+npm run build
+pm2 restart premiacoes-admin
+```
+
+---
+
 ## Pré-requisitos
 
 - Droplet Ubuntu no Digital Ocean

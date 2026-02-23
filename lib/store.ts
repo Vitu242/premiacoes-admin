@@ -1,7 +1,14 @@
 "use client";
 
-import type { Gerente, Cambista, Extracao, Bilhete, Lancamento, Resultado } from "./types";
-import { pushToSupabase, useSupabase } from "./sync-supabase";
+import type { Gerente, Cambista, Extracao, Bilhete, ItemBilhete, Lancamento, Resultado, ModalidadeBilhete } from "./types";
+import { pushToSupabase, useSupabase, pushConfigToSupabase } from "./sync-supabase";
+import {
+  COTACOES_PADROES_DEFAULT,
+  type CotacaoKey,
+  type CotacoesPadroes,
+} from "./cotacoes";
+import { getExtracoesPadrao } from "./extracoes-padrao";
+import { conferirBilhete } from "./conferencia";
 
 const GERENTES_KEY = "premiacoes_gerentes";
 const CAMBISTAS_KEY = "premiacoes_cambistas";
@@ -10,12 +17,15 @@ const BILHETES_KEY = "premiacoes_bilhetes";
 const LANCAMENTOS_KEY = "premiacoes_lancamentos";
 const RESULTADOS_KEY = "premiacoes_resultados";
 const CONFIG_KEY = "premiacoes_config";
+const COTACOES_PADROES_KEY = "premiacoes_cotacoes_padroes";
 
 export interface AppConfig {
   tempoCancelamentoMinutos: number;
+  /** Até qual prêmio o cliente pode apostar: 5 = só 1/5, 10 = até 1/10 */
+  premioMax: 5 | 10;
 }
 
-const CONFIG_DEFAULT: AppConfig = { tempoCancelamentoMinutos: 5 };
+const CONFIG_DEFAULT: AppConfig = { tempoCancelamentoMinutos: 5, premioMax: 10 };
 
 function loadGerentes(): Gerente[] {
   if (typeof window === "undefined") return [];
@@ -59,6 +69,7 @@ export function getGerentes(): Gerente[] {
   if (g.length === 0) {
     const inicial: Gerente = {
       id: "1",
+      codigo: "default",
       login: "gerente",
       senha: "123",
       tipo: "Gerente",
@@ -76,7 +87,12 @@ export function getGerentes(): Gerente[] {
     saveGerentes([inicial]);
     return [inicial];
   }
-  return g;
+  return g.map((x) => ({ ...x, codigo: (x as { codigo?: string }).codigo ?? "default" }));
+}
+
+/** Retorna gerentes do código da banca (admin vê só os do seu código). */
+export function getGerentesPorCodigo(codigo: string): Gerente[] {
+  return getGerentes().filter((g) => (g.codigo ?? "default") === codigo);
 }
 
 export function getCambistas(): Cambista[] {
@@ -86,6 +102,7 @@ export function getCambistas(): Cambista[] {
       {
         id: "1",
         gerenteId: "1",
+        codigo: "default",
         login: "Alana Santos",
         senha: "123",
         saldo: 1000,
@@ -112,6 +129,7 @@ export function getCambistas(): Cambista[] {
       {
         id: "2",
         gerenteId: "1",
+        codigo: "default",
         login: "Carvalho Premiações",
         senha: "123",
         saldo: 5000,
@@ -139,7 +157,12 @@ export function getCambistas(): Cambista[] {
     saveCambistas(inicial);
     return inicial;
   }
-  return c;
+  return c.map((x) => ({ ...x, codigo: (x as { codigo?: string }).codigo ?? "default" }));
+}
+
+/** Retorna cambistas do código da banca (admin vê só os do seu código; cliente entra com esse código). */
+export function getCambistasPorCodigo(codigo: string): Cambista[] {
+  return getCambistas().filter((c) => (c.codigo ?? "default") === codigo);
 }
 
 export function setGerentes(gerentes: Gerente[]) {
@@ -154,6 +177,7 @@ export function addGerente(g: Omit<Gerente, "id" | "criadoEm">): Gerente {
   const lista = getGerentes();
   const novo: Gerente = {
     ...g,
+    codigo: g.codigo ?? "default",
     id: String(Date.now()),
     criadoEm: new Date().toLocaleString("pt-BR"),
   };
@@ -182,7 +206,7 @@ export function deleteGerente(id: string): void {
 
 export function addCambista(c: Omit<Cambista, "id">): Cambista {
   const lista = getCambistas();
-  const novo: Cambista = { ...c, id: String(Date.now()) };
+  const novo: Cambista = { ...c, codigo: c.codigo ?? "default", id: String(Date.now()) };
   lista.push(novo);
   saveCambistas(lista);
   return novo;
@@ -233,17 +257,36 @@ function saveExtracoes(e: Extracao[]) {
 export function getExtracoes(): Extracao[] {
   const e = loadExtracoes();
   if (e.length === 0) {
-    const inicial: Extracao[] = [
-      { id: "1", nome: "NACIONAL 02:00", encerra: "02:00", ativa: true },
-      { id: "2", nome: "LOOK GOIAS 07:20", encerra: "07:20", ativa: true },
-      { id: "3", nome: "NACIONAL 08:00", encerra: "08:00", ativa: true },
-      { id: "4", nome: "PT RIO 09:20", encerra: "09:20", ativa: true },
-      { id: "5", nome: "NACIONAL 10:00", encerra: "10:00", ativa: true },
-    ];
+    const inicial = getExtracoesPadrao();
     saveExtracoes(inicial);
     return inicial;
   }
   return e;
+}
+
+export function setExtracoes(extracoes: Extracao[]) {
+  saveExtracoes(extracoes);
+}
+
+export function updateExtracao(id: string, dados: Partial<Extracao>) {
+  const lista = getExtracoes();
+  const idx = lista.findIndex((e) => e.id === id);
+  if (idx >= 0) {
+    lista[idx] = { ...lista[idx], ...dados };
+    saveExtracoes(lista);
+  }
+}
+
+export function addExtracao(ext: Omit<Extracao, "id">) {
+  const lista = getExtracoes();
+  const novo: Extracao = { ...ext, id: String(Date.now()) };
+  lista.push(novo);
+  saveExtracoes(lista);
+  return novo;
+}
+
+export function deleteExtracao(id: string) {
+  saveExtracoes(getExtracoes().filter((e) => e.id !== id));
 }
 
 export function extracaoAceitaApostas(encerra: string): boolean {
@@ -278,14 +321,18 @@ function loadConfig(): AppConfig {
   if (typeof window === "undefined") return CONFIG_DEFAULT;
   try {
     const data = localStorage.getItem(CONFIG_KEY);
-    return data ? { ...CONFIG_DEFAULT, ...JSON.parse(data) } : CONFIG_DEFAULT;
+    const parsed = data ? JSON.parse(data) : {};
+    return { ...CONFIG_DEFAULT, ...parsed, premioMax: parsed.premioMax === 5 ? 5 : 10 };
   } catch {
     return CONFIG_DEFAULT;
   }
 }
 
 function saveConfig(c: AppConfig) {
-  if (typeof window !== "undefined") localStorage.setItem(CONFIG_KEY, JSON.stringify(c));
+  if (typeof window !== "undefined") {
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(c));
+    if (useSupabase) void pushConfigToSupabase(c);
+  }
 }
 
 export function getConfig(): AppConfig {
@@ -298,6 +345,50 @@ export function setConfig(c: Partial<AppConfig>) {
 
 export function getTempoCancelamentoMinutos(): number {
   return loadConfig().tempoCancelamentoMinutos;
+}
+
+export function getPremioMax(): 5 | 10 {
+  return loadConfig().premioMax;
+}
+
+// Cotações padrão (22 tipos) – editáveis no painel em Cotações
+function loadCotacoesPadroes(): CotacoesPadroes {
+  if (typeof window === "undefined") return { ...COTACOES_PADROES_DEFAULT };
+  try {
+    const data = localStorage.getItem(COTACOES_PADROES_KEY);
+    if (!data) return { ...COTACOES_PADROES_DEFAULT };
+    const parsed = JSON.parse(data);
+    return { ...COTACOES_PADROES_DEFAULT, ...parsed };
+  } catch {
+    return { ...COTACOES_PADROES_DEFAULT };
+  }
+}
+
+function saveCotacoesPadroes(c: CotacoesPadroes) {
+  if (typeof window !== "undefined") localStorage.setItem(COTACOES_PADROES_KEY, JSON.stringify(c));
+}
+
+export function getCotacoesPadroes(): CotacoesPadroes {
+  return loadCotacoesPadroes();
+}
+
+export function setCotacoesPadroes(c: Partial<CotacoesPadroes>) {
+  saveCotacoesPadroes({ ...loadCotacoesPadroes(), ...c });
+}
+
+/** Cotação efetiva para um cambista: override do cliente, senão padrão. Para grupo/dezena/centena/milhar usa também os campos antigos se não houver override. */
+export function getCotacaoEfetiva(cambista: Cambista, key: CotacaoKey): number {
+  const padroes = loadCotacoesPadroes();
+  const override = cambista.cotacoes?.[key];
+  if (override !== undefined && override !== null) return override;
+  const legacy: Record<string, number> = {
+    milhar: cambista.cotacaoM,
+    centena: cambista.cotacaoC,
+    dezena: cambista.cotacaoD,
+    grupo: cambista.cotacaoG,
+  };
+  if (legacy[key] !== undefined) return legacy[key];
+  return padroes[key] ?? 0;
 }
 
 /** Saldo disponível para vendas = limite (saldo) - já vendido (entrada). Se zerado, cambista não pode vender. */
@@ -380,6 +471,14 @@ export function addBilhete(b: Omit<Bilhete, "id" | "codigo">): Bilhete {
   return novo;
 }
 
+/** Mapeia modalidade (CotacaoKey) para a base usada na comissão (grupo, dezena, centena, milhar). */
+function baseComissao(mod: string): "grupo" | "dezena" | "centena" | "milhar" {
+  if (mod.startsWith("duque_grupo") || mod.startsWith("terno_grupo") || mod.startsWith("passe")) return "grupo";
+  if (mod.startsWith("duque_dezena") || mod.startsWith("terno_dezena")) return "dezena";
+  if (mod.includes("centena") && mod !== "milhar_e_centena" && mod !== "mc_invertida") return "centena";
+  return "milhar";
+}
+
 /** Calcula a comissão do bilhete com base nas taxas do cambista */
 export function calcularComissaoBilhete(bilhete: Bilhete, cambista: Cambista): number {
   const pct: Record<string, number> = {
@@ -389,10 +488,12 @@ export function calcularComissaoBilhete(bilhete: Bilhete, cambista: Cambista): n
     milhar: cambista.comissaoMilhar,
   };
   return bilhete.itens.reduce((acc, item) => {
-    return acc + item.valor * ((pct[item.modalidade] ?? 0) / 100);
+    const base = baseComissao(item.modalidade);
+    return acc + item.valor * ((pct[base] ?? 0) / 100);
   }, 0);
 }
 
+/** Cancela bilhete (só pendente). Respeita tempo e encerra da extração no cliente; no admin use cancelarBilheteAdmin. */
 export function cancelarBilhete(id: string): boolean {
   const lista = getBilhetes();
   const idx = lista.findIndex((b) => b.id === id);
@@ -408,6 +509,25 @@ export function cancelarBilhete(id: string): boolean {
       comissao: Math.max(0, (cam.comissao ?? 0) - comissaoBilhete),
     });
   }
+  return true;
+}
+
+/** Cancela bilhete pelo admin a qualquer momento (pendente, pago ou perdedor). Em pendente reverte entrada e comissão. */
+export function cancelarBilheteAdmin(id: string): boolean {
+  const lista = getBilhetes();
+  const idx = lista.findIndex((b) => b.id === id);
+  if (idx < 0 || lista[idx].situacao === "cancelado") return false;
+  const b = lista[idx];
+  const cam = getCambistas().find((c) => c.id === b.cambistaId);
+  if (b.situacao === "pendente" && cam) {
+    const comissaoBilhete = calcularComissaoBilhete(b, cam);
+    updateCambista(b.cambistaId, {
+      entrada: Math.max(0, (cam.entrada ?? 0) - b.total),
+      comissao: Math.max(0, (cam.comissao ?? 0) - comissaoBilhete),
+    });
+  }
+  lista[idx] = { ...lista[idx], situacao: "cancelado" };
+  saveBilhetes(lista);
   return true;
 }
 
@@ -440,10 +560,12 @@ export function addLancamento(l: Omit<Lancamento, "id">): Lancamento {
   saveLancamentos(lista);
   const cam = getCambistas().find((c) => c.id === l.cambistaId);
   if (cam) {
+    // Lançamento afeta apenas o caixa (lancamentos), não o saldo (limite do cliente).
+    // + adiantar: banca mandou dinheiro pro cliente → aumenta total a prestar
+    // - retirar: cliente mandou dinheiro pra banca → diminui total a prestar
     const delta = l.tipo === "adiantar" ? l.valor : -l.valor;
     updateCambista(l.cambistaId, {
       lancamentos: cam.lancamentos + delta,
-      saldo: Math.max(0, cam.saldo + delta),
     });
   }
   return novo;
@@ -476,5 +598,57 @@ export function addResultado(r: Omit<Resultado, "id">): Resultado {
   const novo: Resultado = { ...r, id: String(Date.now()) };
   lista.push(novo);
   saveResultados(lista);
+  atualizarBilhetesComResultado(novo);
   return novo;
+}
+
+/** Data do bilhete "23/02/2026, 12:05:00" -> "23/02/26" */
+function normalizarDataBilhete(dataStr: string): string {
+  const m = dataStr.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (!m) return "";
+  const [, d, M, y] = m;
+  const ano = y!.length === 2 ? y : y!.slice(-2);
+  return `${d}/${M}/${ano}`;
+}
+
+/** Busca resultado pela extração e data (data no formato dd/mm/yy ou dd/mm/yyyy) */
+export function getResultadoByExtracaoData(extracaoId: string, dataBilhete: string): Resultado | null {
+  const dataNorm = normalizarDataBilhete(dataBilhete);
+  if (!dataNorm) return null;
+  const resultados = getResultados();
+  return resultados.find((r) => r.extracaoId === extracaoId && normalizarDataBilhete(r.data) === dataNorm) ?? null;
+}
+
+/** Ao adicionar resultado, marca bilhetes daquela extração/data como pago ou perdedor. Prêmio pago vira Saída no caixa do cambista. */
+function atualizarBilhetesComResultado(resultado: Resultado) {
+  const dataNorm = normalizarDataBilhete(resultado.data);
+  if (!dataNorm) return;
+  const bilhetes = getBilhetes();
+  const cambistas = getCambistas();
+  let changed = false;
+  for (const b of bilhetes) {
+    if (b.extracaoId !== resultado.extracaoId || b.situacao !== "pendente") continue;
+    if (normalizarDataBilhete(b.data) !== dataNorm) continue;
+    const cam = cambistas.find((c) => c.id === b.cambistaId);
+    const conf = conferirBilhete(b, resultado, cam ?? null, getCotacaoEfetiva);
+    const novaSituacao = conf.valorGanho > 0 ? "pago" : "perdedor";
+    const idx = bilhetes.findIndex((x) => x.id === b.id);
+    if (idx >= 0) {
+      bilhetes[idx] = { ...bilhetes[idx], situacao: novaSituacao };
+      changed = true;
+      if (novaSituacao === "pago" && cam && conf.valorGanho > 0) {
+        updateCambista(b.cambistaId, {
+          saidas: (cam.saidas ?? 0) + conf.valorGanho,
+        });
+      }
+    }
+  }
+  if (changed) saveBilhetes(bilhetes);
+}
+
+/** Valor dos jogos em aberto do cambista (bilhetes pendentes, ainda sem resultado). Só entra no caixa após sair o resultado. */
+export function getJogosEmAberto(cambistaId: string): number {
+  return getBilhetes()
+    .filter((b) => b.cambistaId === cambistaId && b.situacao === "pendente")
+    .reduce((s, b) => s + b.total, 0);
 }

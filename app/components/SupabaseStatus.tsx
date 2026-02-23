@@ -6,7 +6,6 @@ import { initFromSupabase } from "@/lib/sync-supabase";
 
 export function SupabaseStatus() {
   const [status, setStatus] = useState<"checking" | "ok" | "off" | "erro">("checking");
-  const [count, setCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (!useSupabase || !supabase) {
@@ -15,15 +14,12 @@ export function SupabaseStatus() {
     }
     void (async () => {
       try {
-        const { count: c, error } = await supabase
-          .from("cambistas")
-          .select("*", { count: "exact", head: true });
+        const { error } = await supabase.from("cambistas").select("id").limit(1).maybeSingle();
         if (error) {
           setStatus("erro");
           return;
         }
         setStatus("ok");
-        setCount(c ?? 0);
       } catch {
         setStatus("erro");
       }
@@ -59,7 +55,7 @@ export function SupabaseStatus() {
   if (status === "ok") {
     return (
       <div className={baseClass + " bg-green-600 flex items-center gap-2"}>
-        <span>Conectado{count !== null ? ` (${count} cambistas)` : ""}</span>
+        <span>Conectado</span>
         <button onClick={handleSync} className="underline">Sincronizar</button>
       </div>
     );

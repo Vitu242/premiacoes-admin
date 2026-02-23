@@ -8,17 +8,23 @@ import {
   getCambistas,
   getExtracoes,
   getTempoCancelamentoMinutos,
+  getResultadoByExtracaoData,
   podeCancelarBilhete,
   cancelarBilhete,
   calcularComissaoBilhete,
+  getCotacaoEfetiva,
 } from "@/lib/store";
+import { conferirBilhete } from "@/lib/conferencia";
 import type { Bilhete, Extracao } from "@/lib/types";
+
+import { COTACOES_LABELS } from "@/lib/cotacoes";
 
 const MODALIDADES: Record<string, string> = {
   grupo: "GRUPO",
   dezena: "DEZENA",
   centena: "CENTENA",
   milhar: "MILHAR",
+  ...Object.fromEntries(Object.entries(COTACOES_LABELS).map(([k, v]) => [k, v.toUpperCase()])),
 };
 
 function formatarMoeda(v: number) {
@@ -76,8 +82,15 @@ export default function ClienteBilhetePage() {
 
   const handleCancelar = (b: Bilhete) => {
     const ext = extracoes.find((e) => e.id === b.extracaoId);
+    if (b.situacao !== "pendente") {
+      alert("Só é possível cancelar bilhetes pendentes.");
+      return;
+    }
     if (!ext || !podeCancelarBilhete(b, ext, tempoCancel)) {
-      alert("Não é mais possível cancelar este bilhete.");
+      const msg = ext
+        ? `Não é mais possível cancelar: passou do tempo limite (${tempoCancel} min após a aposta) ou do horário de encerramento da extração (${ext.encerra}).`
+        : `Não é mais possível cancelar: passou do tempo limite (${tempoCancel} min) ou do horário da extração.`;
+      alert(msg);
       return;
     }
     if (!confirm("Cancelar este bilhete?")) return;
@@ -202,7 +215,10 @@ export default function ClienteBilhetePage() {
               </button>
 
               {/* Detalhe expandido */}
-              {detalhe?.id === b.id && (
+              {detalhe?.id === b.id && (() => {
+                const resultado = getResultadoByExtracaoData(b.extracaoId, b.data);
+                const conf = conferirBilhete(b, resultado, cambista ?? null, getCotacaoEfetiva);
+                return (
                 <div className="mt-4 border-t border-gray-100 pt-4 text-sm">
                   <p className="text-gray-500">Emitido: {formatarData(b.data)}</p>
                   <p className="text-gray-500">Ponto: {cambista?.login}</p>
@@ -212,13 +228,34 @@ export default function ClienteBilhetePage() {
                     <div key={i} className="mt-1">
                       <span className="font-medium">{MODALIDADES[item.modalidade] || item.modalidade}</span>{" "}
                       <span className="font-bold">{item.numeros}</span>
-                      <span className="text-gray-600"> | 1/1 a {item.valor.toFixed(2).replace(".", ",")} = {item.valor.toFixed(2).replace(".", ",")}</span>
+                      <span className="text-gray-600"> | {item.premio || "1/1"} — {formatarMoeda(item.valor)}</span>
                       {item.milharBrinde && (
-                        <p className="text-green-600">MILHAR BRINDE 1/1 {item.milharBrinde}</p>
+                        <p className="text-green-600">MILHAR BRINDE {item.premio || "1/1"} {item.milharBrinde}</p>
                       )}
                     </div>
                   ))}
                   <p className="mt-3 font-bold text-gray-800">TOTAL: {formatarMoeda(b.total)}</p>
+
+                  {/* Calculadora: resultado e valor ganho */}
+                  <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <p className="mb-2 font-medium text-gray-800">Conferência</p>
+                    {resultado ? (
+                      <>
+                        <p className={`text-lg font-bold ${conf.vencedor ? "text-green-700" : "text-gray-700"}`}>
+                          {conf.vencedor ? `Vencedor ${formatarMoeda(conf.valorGanho)}` : "Perdedor"}
+                        </p>
+                        {conf.itens.some((x) => x.bateu) && (
+                          <ul className="mt-1 list-inside list-disc text-xs text-gray-600">
+                            {conf.itens.filter((x) => x.bateu).map((x, i) => (
+                              <li key={i}>{MODALIDADES[x.item.modalidade]} {x.item.numeros}: {formatarMoeda(x.valorGanho)}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-gray-500">Aguardando resultado da extração.</p>
+                    )}
+                  </div>
                   <p className="mt-2 text-xs text-blue-600">
                     Confira seu bilhete, a banca não se responsabiliza por qualquer erro do cambista.
                   </p>
@@ -250,7 +287,8 @@ export default function ClienteBilhetePage() {
                     </button>
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </div>
           ))
         )}

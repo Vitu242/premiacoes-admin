@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
-  getCambistas,
-  getGerentes,
+  getCambistasPorCodigo,
+  getGerentesPorCodigo,
   prestarContasCambista,
   calcularTotalCaixa,
 } from "@/lib/store";
+import { getAdminCodigo } from "@/lib/auth";
 import type { Cambista } from "@/lib/types";
 
 function formatarMoeda(valor: number) {
@@ -17,14 +18,15 @@ function formatarMoeda(valor: number) {
 }
 
 export default function PrestarContasPage() {
+  const codigo = getAdminCodigo();
   const [cambistas, setCambistasState] = useState<Cambista[]>([]);
-  const [gerentes] = useState(getGerentes());
+  const gerentes = useMemo(() => getGerentesPorCodigo(codigo ?? ""), [codigo]);
   const [filtroGerente, setFiltroGerente] = useState("todos");
   const [detalhe, setDetalhe] = useState<Cambista | null>(null);
 
   useEffect(() => {
-    setCambistasState(getCambistas());
-  }, []);
+    if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
+  }, [codigo]);
 
   const filtrar = cambistas.filter((c) =>
     filtroGerente === "todos" ? true : c.gerenteId === filtroGerente
@@ -32,7 +34,7 @@ export default function PrestarContasPage() {
 
   const handlePrestarContas = (id: string) => {
     prestarContasCambista(id);
-    setCambistasState(getCambistas());
+    if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
     setDetalhe(null);
   };
 
@@ -43,7 +45,7 @@ export default function PrestarContasPage() {
       )
     ) {
       filtrar.forEach((c) => prestarContasCambista(c.id));
-      setCambistasState(getCambistas());
+      if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
       setDetalhe(null);
     }
   };

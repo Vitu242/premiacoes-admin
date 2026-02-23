@@ -11,6 +11,7 @@ export default function ConfiguracoesPage() {
   const [novaSenha, setNovaSenha] = useState("");
   const [confirmarSenha, setConfirmarSenha] = useState("");
   const [tempoCancelamento, setTempoCancelamento] = useState(5);
+  const [premioMax, setPremioMax] = useState<5 | 10>(10);
   const [mensagem, setMensagem] = useState<{ tipo: "sucesso" | "erro"; texto: string } | null>(null);
 
   useEffect(() => {
@@ -24,6 +25,7 @@ export default function ConfiguracoesPage() {
       }
       const config = getConfig();
       setTempoCancelamento(config.tempoCancelamentoMinutos);
+      setPremioMax(config.premioMax ?? 10);
     }
   }, []);
 
@@ -65,6 +67,11 @@ export default function ConfiguracoesPage() {
     setConfig({ tempoCancelamentoMinutos: n });
     setTempoCancelamento(n);
     setMensagem({ tipo: "sucesso", texto: "Tempo para cancelar bilhete atualizado!" });
+  };
+
+  const handleSalvarPremioMax = () => {
+    setConfig({ premioMax });
+    setMensagem({ tipo: "sucesso", texto: "Prêmios permitidos ao cliente atualizado!" });
   };
 
   return (
@@ -155,6 +162,41 @@ export default function ConfiguracoesPage() {
       </div>
 
       {/* Tempo para cancelar bilhete */}
+      <div className="mb-8 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <h2 className="mb-4 text-lg font-semibold text-gray-800">
+          Prêmios permitidos ao cliente
+        </h2>
+        <p className="mb-4 text-sm text-gray-500">
+          Define até qual prêmio o cliente pode apostar. Ex.: &quot;Até 1/5&quot; = só jogos de 1/1 a 5/5; &quot;Até 1/10&quot; = de 1/1 até 5/10.
+        </p>
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name="premioMax"
+              checked={premioMax === 5}
+              onChange={() => setPremioMax(5)}
+            />
+            Até 1/5 (só 1º ao 5º prêmio)
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name="premioMax"
+              checked={premioMax === 10}
+              onChange={() => setPremioMax(10)}
+            />
+            Até 1/10 (1º ao 10º prêmio)
+          </label>
+          <button
+            onClick={handleSalvarPremioMax}
+            className="rounded bg-orange-500 px-4 py-2 font-medium text-white hover:bg-orange-600"
+          >
+            Salvar
+          </button>
+        </div>
+      </div>
+
       <div className="mb-8 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <h2 className="mb-4 text-lg font-semibold text-gray-800">
           Tempo para cancelar bilhete (cliente)

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { getCambistas } from "@/lib/store";
+import { getCambistasPorCodigo } from "@/lib/store";
 
 export default function ClienteLoginPage() {
   const router = useRouter();
@@ -20,7 +20,7 @@ export default function ClienteLoginPage() {
       return;
     }
 
-    const cambistas = getCambistas();
+    const cambistas = getCambistasPorCodigo(codigo.trim());
     const cambista = cambistas.find(
       (c) => c.login.toLowerCase() === login.toLowerCase() && c.senha === senha
     );

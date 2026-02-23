@@ -25,7 +25,7 @@ export default function LoginPage() {
         router.push("/");
         router.refresh();
       } else {
-        setErro("Login ou senha incorretos.");
+        setErro("Código, login ou senha incorretos. Use as credenciais registradas.");
       }
     }
   };

@@ -1,20 +1,22 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getCambistas, updateCambista } from "@/lib/store";
+import { getCambistasPorCodigo, updateCambista } from "@/lib/store";
+import { getAdminCodigo } from "@/lib/auth";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
 export default function SaldoPage() {
-  const [cambistas, setCambistas] = useState(getCambistas());
+  const codigo = getAdminCodigo();
+  const [cambistas, setCambistas] = useState(getCambistasPorCodigo(codigo ?? ""));
   const [selecionado, setSelecionado] = useState("");
   const [ajuste, setAjuste] = useState(0);
 
   useEffect(() => {
-    setCambistas(getCambistas());
-  }, []);
+    if (codigo) setCambistas(getCambistasPorCodigo(codigo));
+  }, [codigo]);
 
   const cambista = selecionado ? cambistas.find((c) => c.id === selecionado) : null;
 
@@ -22,7 +24,7 @@ export default function SaldoPage() {
     if (!cambista) return;
     const novoSaldo = Math.max(0, cambista.saldo + delta);
     updateCambista(cambista.id, { saldo: novoSaldo });
-    setCambistas(getCambistas());
+    setCambistas(getCambistasPorCodigo(codigo ?? ""));
     setAjuste(0);
   };
 
@@ -30,7 +32,7 @@ export default function SaldoPage() {
     if (!cambista || ajuste === 0) return;
     const novoSaldo = Math.max(0, cambista.saldo + ajuste);
     updateCambista(cambista.id, { saldo: novoSaldo });
-    setCambistas(getCambistas());
+    setCambistas(getCambistasPorCodigo(codigo ?? ""));
     setAjuste(0);
   };
 

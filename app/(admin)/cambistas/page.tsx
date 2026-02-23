@@ -1,22 +1,24 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
-  getCambistas,
-  getGerentes,
+  getCambistasPorCodigo,
+  getGerentesPorCodigo,
   addCambista,
   updateCambista,
   deleteCambista,
 } from "@/lib/store";
+import { getAdminCodigo } from "@/lib/auth";
 import type { Cambista } from "@/lib/types";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-function cambistaInicial(gerenteId: string): Omit<Cambista, "id"> {
+function cambistaInicial(gerenteId: string, codigo: string): Omit<Cambista, "id"> {
   return {
     gerenteId,
+    codigo,
     login: "",
     senha: "",
     saldo: 0,
@@ -43,17 +45,18 @@ function cambistaInicial(gerenteId: string): Omit<Cambista, "id"> {
 }
 
 export default function CambistasPage() {
+  const codigo = getAdminCodigo();
   const [cambistas, setCambistasState] = useState<Cambista[]>([]);
-  const [gerentes] = useState(getGerentes());
+  const gerentes = useMemo(() => getGerentesPorCodigo(codigo ?? ""), [codigo]);
   const [filtroNome, setFiltroNome] = useState("");
   const [filtroGerente, setFiltroGerente] = useState("todos");
   const [editando, setEditando] = useState<Cambista | null>(null);
   const [novo, setNovo] = useState(false);
-  const [form, setForm] = useState(cambistaInicial(gerentes[0]?.id ?? ""));
+  const [form, setForm] = useState(cambistaInicial(gerentes[0]?.id ?? "", codigo ?? "default"));
 
   useEffect(() => {
-    setCambistasState(getCambistas());
-  }, []);
+    if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
+  }, [codigo]);
 
   const filtrar = cambistas.filter((c) => {
     const okNome = c.login.toLowerCase().includes(filtroNome.toLowerCase());
@@ -71,16 +74,17 @@ export default function CambistasPage() {
   const abrirNovo = () => {
     setEditando(null);
     setNovo(true);
-    setForm(cambistaInicial(gerentes[0]?.id ?? ""));
+    setForm(cambistaInicial(gerentes[0]?.id ?? "", codigo ?? "default"));
   };
 
   const salvar = () => {
     if (novo) {
-      addCambista(form);
+      const gerenteCodigo = gerentes.find((g) => g.id === form.gerenteId)?.codigo ?? codigo ?? "default";
+      addCambista({ ...form, codigo: gerenteCodigo });
     } else if (editando) {
       updateCambista(editando.id, form);
     }
-    setCambistasState(getCambistas());
+    setCambistasState(getCambistasPorCodigo(codigo ?? ""));
     setEditando(null);
     setNovo(false);
   };
@@ -88,7 +92,7 @@ export default function CambistasPage() {
   const apagar = (id: string) => {
     if (confirm("Apagar este cambista?")) {
       deleteCambista(id);
-      setCambistasState(getCambistas());
+      setCambistasState(getCambistasPorCodigo(codigo ?? ""));
       setEditando(null);
     }
   };

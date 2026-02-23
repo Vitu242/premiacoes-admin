@@ -1,20 +1,22 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { getCambistas, getGerentes, calcularTotalCaixa } from "@/lib/store";
+import { useState, useEffect, useMemo } from "react";
+import { getCambistasPorCodigo, getGerentesPorCodigo, calcularTotalCaixa, getJogosEmAberto } from "@/lib/store";
+import { getAdminCodigo } from "@/lib/auth";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
 export default function CaixaPage() {
-  const [cambistas, setCambistas] = useState(getCambistas());
+  const codigo = getAdminCodigo();
+  const [cambistas, setCambistas] = useState(getCambistasPorCodigo(codigo ?? ""));
   const [filtroGerente, setFiltroGerente] = useState("todos");
-  const gerentes = getGerentes();
+  const gerentes = useMemo(() => getGerentesPorCodigo(codigo ?? ""), [codigo]);
 
   useEffect(() => {
-    setCambistas(getCambistas());
-  }, []);
+    if (codigo) setCambistas(getCambistasPorCodigo(codigo));
+  }, [codigo]);
 
   const filtrar = cambistas.filter(
     (c) => filtroGerente === "todos" || c.gerenteId === filtroGerente
@@ -46,13 +48,17 @@ export default function CaixaPage() {
         </select>
       </div>
 
+      <p className="mb-4 text-sm text-gray-600">
+        Entrada = vendas; Saídas = prêmios já pagos (após sair resultado). Jogos em aberto = valor apostado ainda sem resultado (só entra no caixa após o resultado).
+      </p>
+
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <p className="text-sm text-gray-500">Entrada</p>
           <p className="text-xl font-bold text-green-700">{formatarMoeda(totalGeral.entrada)}</p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-          <p className="text-sm text-gray-500">Saídas</p>
+          <p className="text-sm text-gray-500">Saídas (prêmios pagos)</p>
           <p className="text-xl font-bold text-red-700">{formatarMoeda(totalGeral.saidas)}</p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
@@ -76,6 +82,7 @@ export default function CaixaPage() {
           <thead className="bg-gray-50">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Cambista</th>
+              <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-600">Jogos em aberto</th>
               <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-600">Entrada</th>
               <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-600">Saídas</th>
               <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-600">Comissão</th>
@@ -85,10 +92,14 @@ export default function CaixaPage() {
           </thead>
           <tbody className="divide-y divide-gray-200">
             {filtrar.map((c) => {
+              const jogosAberto = getJogosEmAberto(c.id);
               const total = calcularTotalCaixa(c);
               return (
                 <tr key={c.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium text-gray-800">{c.login}</td>
+                  <td className="px-4 py-3 text-right text-sm text-blue-600" title="Valor apostado ainda sem resultado">
+                    {formatarMoeda(jogosAberto)}
+                  </td>
                   <td className="px-4 py-3 text-right text-sm text-green-700">{formatarMoeda(c.entrada)}</td>
                   <td className="px-4 py-3 text-right text-sm text-red-700">{formatarMoeda(c.saidas)}</td>
                   <td className="px-4 py-3 text-right text-sm text-orange-600">{formatarMoeda(c.comissao)}</td>

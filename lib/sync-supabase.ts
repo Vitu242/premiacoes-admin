@@ -17,6 +17,7 @@ function toDbCambista(c: Cambista) {
   return {
     id: c.id,
     gerente_id: c.gerenteId,
+    codigo: c.codigo ?? "default",
     login: c.login,
     senha: c.senha,
     saldo: c.saldo,
@@ -39,6 +40,7 @@ function toDbCambista(c: Cambista) {
     comissao: c.comissao,
     lancamentos: c.lancamentos,
     ultima_prestacao: c.ultimaPrestacao,
+    cotacoes: c.cotacoes ?? null,
   };
 }
 
@@ -63,6 +65,7 @@ export async function initFromSupabase(): Promise<boolean> {
 
     if (gerentesRes.data?.length) write(KEYS.gerentes, gerentesRes.data.map((r: Record<string, unknown>) => ({
       id: r.id,
+      codigo: r.codigo ?? "default",
       login: r.login,
       senha: r.senha,
       tipo: r.tipo,
@@ -81,6 +84,7 @@ export async function initFromSupabase(): Promise<boolean> {
     if (cambistasRes.data?.length) write(KEYS.cambistas, cambistasRes.data.map((r: Record<string, unknown>) => ({
       id: r.id,
       gerenteId: r.gerente_id ?? "",
+      codigo: r.codigo ?? "default",
       login: r.login ?? "",
       senha: r.senha ?? "",
       saldo: Number(r.saldo ?? 0),
@@ -103,6 +107,7 @@ export async function initFromSupabase(): Promise<boolean> {
       comissao: Number(r.comissao ?? 0),
       lancamentos: Number(r.lancamentos ?? 0),
       ultimaPrestacao: r.ultima_prestacao ?? null,
+      cotacoes: r.cotacoes != null && typeof r.cotacoes === "object" ? r.cotacoes : undefined,
     })));
 
     if (extracoesRes.data?.length) write(KEYS.extracoes, extracoesRes.data.map((r: Record<string, unknown>) => ({
@@ -140,6 +145,7 @@ export async function initFromSupabase(): Promise<boolean> {
       data: r.data ?? "",
       grupos: r.grupos ?? "",
       dezenas: r.dezenas,
+      premios: r.premios != null && typeof r.premios === "object" ? r.premios : undefined,
     })));
 
     if (configRes.data?.length) {
@@ -163,6 +169,17 @@ export async function initFromSupabase(): Promise<boolean> {
     if (!bilhetesRes.data?.length && local(KEYS.bilhetes).length) await pushToSupabase("bilhetes", local(KEYS.bilhetes));
     if (!lancamentosRes.data?.length && local(KEYS.lancamentos).length) await pushToSupabase("lancamentos", local(KEYS.lancamentos));
     if (!resultadosRes.data?.length && local(KEYS.resultados).length) await pushToSupabase("resultados", local(KEYS.resultados));
+    if (!configRes.data?.length) {
+      try {
+        const s = localStorage.getItem(KEYS.config);
+        if (s) {
+          const val = JSON.parse(s) as Record<string, unknown>;
+          if (val && typeof val === "object") await pushConfigToSupabase(val);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
 
     return true;
   } catch {
@@ -185,7 +202,7 @@ export async function pushToSupabase(
       }
       if (table === "gerentes") {
         const g = r as unknown as Gerente;
-        return { id: g.id, login: g.login, senha: g.senha, tipo: g.tipo, comissao_bruto: g.comissaoBruto, comissao_lucro: g.comissaoLucro, endereco: g.endereco, telefone: g.telefone, descricao: g.descricao, criar_cambista: g.criarCambista, adicionar_saldo: g.adicionarSaldo, status: g.status, socio: g.socio, criado_em: g.criadoEm };
+        return { id: g.id, codigo: g.codigo ?? "default", login: g.login, senha: g.senha, tipo: g.tipo, comissao_bruto: g.comissaoBruto, comissao_lucro: g.comissaoLucro, endereco: g.endereco, telefone: g.telefone, descricao: g.descricao, criar_cambista: g.criarCambista, adicionar_saldo: g.adicionarSaldo, status: g.status, socio: g.socio, criado_em: g.criadoEm };
       }
       if (table === "extracoes") {
         const e = r as unknown as Extracao;
@@ -197,7 +214,7 @@ export async function pushToSupabase(
       }
       if (table === "resultados") {
         const r_ = r as unknown as Resultado;
-        return { id: r_.id, extracao_id: r_.extracaoId, extracao_nome: r_.extracaoNome, data: r_.data, grupos: r_.grupos, dezenas: r_.dezenas };
+        return { id: r_.id, extracao_id: r_.extracaoId, extracao_nome: r_.extracaoNome, data: r_.data, grupos: r_.grupos, dezenas: r_.dezenas, premios: r_.premios ?? null };
       }
       return r;
     });
@@ -205,6 +222,17 @@ export async function pushToSupabase(
     if (error) console.error("[Supabase] Erro ao enviar " + table + ":", error.message);
   } catch (e) {
     console.error("[Supabase] Erro ao enviar " + table + ":", e);
+  }
+}
+
+/** Envia a config (premioMax, tempoCancelamentoMinutos) para o Supabase. */
+export async function pushConfigToSupabase(value: Record<string, unknown>): Promise<void> {
+  if (!supabase || typeof value !== "object") return;
+  try {
+    const { error } = await supabase.from("config").upsert([{ id: "default", value }], { onConflict: "id" });
+    if (error) console.error("[Supabase] Erro ao enviar config:", error.message);
+  } catch (e) {
+    console.error("[Supabase] Erro ao enviar config:", e);
   }
 }
 

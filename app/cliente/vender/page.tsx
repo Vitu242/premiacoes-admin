@@ -10,31 +10,56 @@ import {
   addBilhete,
   podeRealizarVenda,
   getSaldoDisponivel,
+  getCotacaoEfetiva,
+  getPremioMax,
 } from "@/lib/store";
 import type { Extracao, ModalidadeBilhete, ItemBilhete } from "@/lib/types";
+import { COTACOES_LABELS } from "@/lib/cotacoes";
+import type { CotacaoKey } from "@/lib/cotacoes";
 
-type Step = "extracao" | "modalidade" | "numeros" | "milharBrinde" | "valor" | "confirmar";
+type Step = "extracao" | "modalidade" | "variante" | "numeros" | "premio" | "milharBrinde" | "valor" | "confirmar";
 
-const MODALIDADES: { id: ModalidadeBilhete; label: string; minDigits: number; maxDigits: number; max: number }[] = [
-  { id: "grupo", label: "Grupo", minDigits: 1, maxDigits: 2, max: 25 },
-  { id: "dezena", label: "Dezena", minDigits: 2, maxDigits: 2, max: 99 },
-  { id: "centena", label: "Centena", minDigits: 3, maxDigits: 3, max: 999 },
-  { id: "milhar", label: "Milhar", minDigits: 4, maxDigits: 4, max: 9999 },
+function opcoesPremio(max: 5 | 10): string[] {
+  const out: string[] = [];
+  for (let i = 1; i <= 5; i++) for (let j = i; j <= max; j++) out.push(`${i}/${j}`);
+  return out;
+}
+
+/** 12 modalidades da tela do cliente (como na imagem). Com variantes = passo extra para escolher 1/2, 1/5, etc. */
+const MODALIDADES_TELA: { label: string; key?: CotacaoKey; variantes?: { key: CotacaoKey; label: string }[] }[] = [
+  { label: "Milhar", key: "milhar" },
+  { label: "Centena", key: "centena" },
+  { label: "Dezena", key: "dezena" },
+  { label: "Grupo", key: "grupo" },
+  { label: "Milhar e Centena", key: "milhar_e_centena" },
+  { label: "Milhar Invertida", key: "milhar_invertida" },
+  { label: "MC Invertida", key: "mc_invertida" },
+  { label: "Centena Invertida", key: "centena_invertida" },
+  { label: "Duque de Grupo", variantes: [{ key: "duque_grupo_1_2", label: "1/2" }, { key: "duque_grupo_1_5", label: "1/5" }] },
+  { label: "Terno de Grupo", variantes: [{ key: "terno_grupo_1_3", label: "1/3" }, { key: "terno_grupo_1_5", label: "1/5" }, { key: "terno_grupo_1_10", label: "1/10" }] },
+  { label: "Duque de Dezena", variantes: [{ key: "duque_dezena_1_2", label: "1/2" }, { key: "duque_dezena_1_5", label: "1/5" }] },
+  { label: "Terno de Dezena", variantes: [{ key: "terno_dezena_1_3", label: "1/3" }, { key: "terno_dezena_1_5", label: "1/5" }, { key: "terno_dezena_1_10", label: "1/10" }] },
 ];
+
+/** Config do input de números por modalidade (para as que têm key direta ou após variante). */
+function getModalidadeConfig(key: CotacaoKey): { minDigits: number; maxDigits: number; max: number; count: number } {
+  const grupo = { minDigits: 1, maxDigits: 2, max: 25, count: 1 };
+  const dezena = { minDigits: 2, maxDigits: 2, max: 99, count: 1 };
+  const centena = { minDigits: 3, maxDigits: 3, max: 999, count: 1 };
+  const milhar = { minDigits: 4, maxDigits: 4, max: 9999, count: 1 };
+  if (key === "grupo" || key === "milhar" || key === "centena" || key === "dezena") {
+    return key === "grupo" ? grupo : key === "dezena" ? dezena : key === "centena" ? centena : milhar;
+  }
+  if (key.startsWith("duque_grupo") || key.startsWith("terno_grupo")) return { ...grupo, count: key.startsWith("duque") ? 2 : 3 };
+  if (key.startsWith("duque_dezena") || key.startsWith("terno_dezena")) return { ...dezena, count: key.startsWith("duque") ? 2 : 3 };
+  if (key.includes("centena") && key !== "milhar_e_centena" && key !== "mc_invertida") return centena;
+  return milhar;
+}
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-function getCotacao(cambista: { cotacaoG: number; cotacaoD: number; cotacaoC: number; cotacaoM: number }, modalidade: ModalidadeBilhete): number {
-  const m: Record<ModalidadeBilhete, number> = {
-    grupo: cambista.cotacaoG,
-    dezena: cambista.cotacaoD,
-    centena: cambista.cotacaoC,
-    milhar: cambista.cotacaoM,
-  };
-  return m[modalidade] ?? 0;
-}
 
 export default function ClienteVenderPage() {
   const router = useRouter();
@@ -42,14 +67,18 @@ export default function ClienteVenderPage() {
   const [step, setStep] = useState<Step>("extracao");
   const [extracao, setExtracao] = useState<Extracao | null>(null);
   const [modalidade, setModalidade] = useState<ModalidadeBilhete | null>(null);
+  const [modalidadeGroupIndex, setModalidadeGroupIndex] = useState<number | null>(null);
   const [numeros, setNumeros] = useState("");
+  const [premio, setPremio] = useState("1/1");
   const [milharBrinde, setMilharBrinde] = useState("");
   const [valor, setValor] = useState("");
   const [erro, setErro] = useState("");
   const [sucesso, setSucesso] = useState<{ codigo: string } | null>(null);
 
-  const extracoes = getExtracoes().filter((e) => e.ativa);
+  const extracoes = getExtracoes().filter((e) => e.ativa && extracaoAceitaApostas(e.encerra));
   const cambista = cambistaId ? getCambistas().find((c) => c.id === cambistaId) : null;
+  const premioMax = getPremioMax();
+  const opcoesPremioList = opcoesPremio(premioMax);
 
   useEffect(() => {
     const auth = localStorage.getItem("premiacoes_cliente");
@@ -61,14 +90,26 @@ export default function ClienteVenderPage() {
     setCambistaId(cid);
   }, [router]);
 
+  const indexComVariante = (): number | null => {
+    if (!modalidade) return null;
+    const i = MODALIDADES_TELA.findIndex((m) => m.variantes?.some((v) => v.key === modalidade));
+    return i >= 0 ? i : null;
+  };
+
   const voltar = () => {
     setErro("");
     if (step === "extracao") router.push("/cliente");
     else if (step === "modalidade") setStep("extracao");
-    else if (step === "numeros") setStep("modalidade");
-    else if (step === "milharBrinde") setStep("numeros");
-    else if (step === "valor") setStep(cambista?.milharBrinde === "sim" ? "milharBrinde" : "numeros");
-    else setStep("valor");
+    else if (step === "variante") { setStep("modalidade"); setModalidadeGroupIndex(null); }
+    else if (step === "numeros") {
+      const idx = indexComVariante();
+      if (idx >= 0) { setStep("variante"); setModalidadeGroupIndex(idx); } else setStep("modalidade");
+    } else if (step === "premio") setStep("numeros");
+    else if (step === "milharBrinde") setStep("premio");
+    else if (step === "valor") {
+      if (modalidade && getPremioFixoFromKey(modalidade)) setStep("numeros");
+      else setStep(cambista?.milharBrinde === "sim" ? "milharBrinde" : "premio");
+    } else setStep("valor");
   };
 
   const escolherExtracao = (e: Extracao) => {
@@ -81,46 +122,113 @@ export default function ClienteVenderPage() {
     setStep("modalidade");
   };
 
-  const escolherModalidade = (m: ModalidadeBilhete) => {
+  const escolherModalidadeKey = (key: CotacaoKey) => {
     setErro("");
-    setModalidade(m);
+    setModalidade(key);
     setNumeros("");
+    const premioFixo = getPremioFixoFromKey(key);
+    if (premioFixo) setPremio(premioFixo);
     setStep("numeros");
   };
 
+  const escolherModalidadeComVariante = (index: number) => {
+    setErro("");
+    setModalidadeGroupIndex(index);
+    setModalidade(null);
+    setNumeros("");
+    setStep("variante");
+  };
+
   const adicionarDigito = (d: string) => {
-    const mod = MODALIDADES.find((x) => x.id === modalidade);
-    if (!mod) return;
-    const nova = numeros + d;
-    if (nova.length > mod.maxDigits) return;
-    const n = parseInt(nova, 10);
-    if (n > mod.max) return;
-    setNumeros(nova);
+    if (!modalidade) return;
+    const config = getModalidadeConfig(modalidade);
+    if (d === " ") {
+      if (config.count !== 1) return;
+      const parts = numeros.trim().split(/\s+/);
+      const last = parts[parts.length - 1] ?? "";
+      if (last.length !== config.maxDigits) return;
+      setNumeros(numeros.trim() + " ");
+      setErro("");
+      return;
+    }
+    if (config.count > 1) {
+      const parts = numeros.trim().split(/\s+/);
+      const last = parts[parts.length - 1] ?? "";
+      const novaLast = last + d;
+      if (novaLast.length > config.maxDigits) return;
+      const n = parseInt(novaLast, 10);
+      if (n > config.max || (config.max === 25 && (n < 1 || n > 25))) return;
+      parts[parts.length - 1] = novaLast;
+      if (parts.length > config.count) return;
+      setNumeros(parts.join(" ").trim());
+    } else {
+      const parts = numeros.trim().split(/\s+/);
+      const last = parts[parts.length - 1] ?? "";
+      const novaLast = last + d;
+      if (novaLast.length > config.maxDigits) return;
+      const n = parseInt(novaLast, 10);
+      if (n > config.max || (config.max === 25 && (n < 1 || n > 25))) return;
+      parts[parts.length - 1] = novaLast;
+      setNumeros(parts.join(" ").trim());
+    }
     setErro("");
   };
 
-  const apagarDigito = () => setNumeros((s) => s.slice(0, -1));
+  const apagarDigito = () => setNumeros((s) => {
+    const t = s.trimEnd();
+    if (t.endsWith(" ")) return t.slice(0, -1);
+    return s.slice(0, -1);
+  });
 
   const confirmarNumeros = () => {
-    const mod = MODALIDADES.find((x) => x.id === modalidade);
-    if (!mod || !cambista) return;
-    if (numeros.length < mod.minDigits) {
-      setErro(`Informe ${mod.minDigits} a ${mod.maxDigits} dígito(s) para ${mod.label}.`);
-      return;
+    if (!modalidade || !cambista) return;
+    const config = getModalidadeConfig(modalidade);
+    const parts = numeros.trim().split(/\s+/).filter(Boolean);
+    if (config.count > 1) {
+      if (parts.length !== config.count) {
+        setErro(`Informe ${config.count} número(s) separados por espaço.`);
+        return;
+      }
+    } else {
+      if (parts.length === 0) {
+        setErro(`Informe ao menos um número (${config.minDigits} a ${config.maxDigits} dígitos).`);
+        return;
+      }
     }
-    const n = parseInt(numeros, 10);
-    if (isNaN(n) || n > mod.max || (mod.id === "grupo" && (n < 1 || n > 25))) {
-      setErro("Número inválido para esta modalidade.");
-      return;
+    for (const p of parts) {
+      if (p.length < config.minDigits || p.length > config.maxDigits) {
+        setErro(`Cada número deve ter ${config.minDigits} a ${config.maxDigits} dígito(s).`);
+        return;
+      }
+      const n = parseInt(p, 10);
+      if (isNaN(n) || n > config.max || (config.max === 25 && (n < 1 || n > 25))) {
+        setErro("Número(s) inválido(s) para esta modalidade.");
+        return;
+      }
     }
-    if (cambista.milharBrinde === "sim") {
+    const premioFixo = getPremioFixoFromKey(modalidade);
+    if (premioFixo) { setPremio(premioFixo); setStep(cambista?.milharBrinde === "sim" ? "milharBrinde" : "valor"); setValor(""); }
+    else { setStep("premio"); setPremio("1/1"); }
+    setErro("");
+  };
+
+  function getPremioFixoFromKey(key: CotacaoKey): string | null {
+    if (key.includes("_1_2")) return "1/2";
+    if (key.includes("_1_5")) return "1/5";
+    if (key.includes("_1_3")) return "1/3";
+    if (key.includes("_1_10")) return "1/10";
+    return null;
+  }
+
+  const confirmarPremio = () => {
+    setErro("");
+    if (cambista?.milharBrinde === "sim") {
       setStep("milharBrinde");
       setMilharBrinde("");
     } else {
       setStep("valor");
       setValor("");
     }
-    setErro("");
   };
 
   const pularMilharBrinde = () => {
@@ -177,6 +285,7 @@ export default function ClienteVenderPage() {
         modalidade,
         numeros,
         valor: v,
+        premio: premio || "1/1",
         ...(milharBrinde.length === 4 && { milharBrinde }),
       };
       const bilhete = addBilhete({
@@ -193,6 +302,7 @@ export default function ClienteVenderPage() {
       setExtracao(null);
       setModalidade(null);
       setNumeros("");
+      setPremio("1/1");
       setMilharBrinde("");
       setValor("");
     } catch (e) {
@@ -290,6 +400,9 @@ export default function ClienteVenderPage() {
       {step === "extracao" && (
         <div>
           <p className="mb-4 text-gray-600">Escolha a extração:</p>
+          {extracoes.length === 0 && (
+            <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Nenhuma loteria disponível no momento (todas já passaram do horário ou estão inativas).</p>
+          )}
           <div className="space-y-2">
             {extracoes.map((e) => {
               const aceita = extracaoAceitaApostas(e.encerra);
@@ -315,19 +428,40 @@ export default function ClienteVenderPage() {
         </div>
       )}
 
-      {/* Step: Modalidade */}
+      {/* Step: Modalidade (12 opções como na imagem) */}
       {step === "modalidade" && extracao && (
         <div>
           <p className="mb-2 text-sm text-gray-500">{extracao.nome}</p>
           <p className="mb-4 text-gray-600">Escolha a modalidade:</p>
-          <div className="grid grid-cols-2 gap-3">
-            {MODALIDADES.map((m) => (
+          <div className="flex flex-col gap-3">
+            {MODALIDADES_TELA.map((m, index) => (
               <button
-                key={m.id}
-                onClick={() => escolherModalidade(m.id)}
-                className="rounded-xl bg-gray-100 px-4 py-4 font-medium text-gray-800 hover:bg-gray-200"
+                key={m.label}
+                type="button"
+                onClick={() => m.key ? escolherModalidadeKey(m.key) : escolherModalidadeComVariante(index)}
+                className="w-full rounded-xl bg-sky-100 px-4 py-4 text-left font-bold text-gray-900 hover:bg-sky-200"
               >
                 {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Step: Variante (1/2, 1/5, 1/3, 1/10 para Duque/Terno) */}
+      {step === "variante" && modalidadeGroupIndex !== null && (
+        <div>
+          <p className="mb-2 text-sm text-gray-500">{extracao?.nome} → {MODALIDADES_TELA[modalidadeGroupIndex]?.label}</p>
+          <p className="mb-4 text-gray-600">Escolha o prêmio:</p>
+          <div className="flex flex-col gap-3">
+            {MODALIDADES_TELA[modalidadeGroupIndex]?.variantes?.map((v) => (
+              <button
+                key={v.key}
+                type="button"
+                onClick={() => escolherModalidadeKey(v.key)}
+                className="w-full rounded-xl bg-sky-100 px-4 py-4 text-left font-bold text-gray-900 hover:bg-sky-200"
+              >
+                {v.label}
               </button>
             ))}
           </div>
@@ -337,20 +471,24 @@ export default function ClienteVenderPage() {
       {/* Step: Números */}
       {step === "numeros" && modalidade && (
         <div>
-          <p className="mb-2 text-sm text-gray-500">{extracao?.nome} → {MODALIDADES.find((m) => m.id === modalidade)?.label}</p>
-          <p className="mb-2 text-gray-600">Digite o número:</p>
-          <div className="mb-4 flex h-14 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-50 text-2xl font-mono font-bold">
+          <p className="mb-2 text-sm text-gray-500">{extracao?.nome} → {COTACOES_LABELS[modalidade] ?? modalidade}</p>
+          <p className="mb-2 text-gray-600">
+            {getModalidadeConfig(modalidade).count > 1
+              ? `Digite ${getModalidadeConfig(modalidade).count} números separados por espaço:`
+              : "Digite um ou mais números (separados por espaço para vários):"}
+          </p>
+          <div className="mb-4 flex min-h-14 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-50 px-2 py-3 text-xl font-mono font-bold break-all text-center">
             {numeros || "—"}
           </div>
           <div className="grid grid-cols-3 gap-3 mb-4">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map((d) => (
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9", getModalidadeConfig(modalidade).count === 1 ? "Espaço" : "", "0", "⌫"].map((d) => (
               <button
-                key={d}
-                onClick={() => (d === "⌫" ? apagarDigito() : adicionarDigito(d))}
+                key={d || "empty"}
+                onClick={() => (d === "⌫" ? apagarDigito() : adicionarDigito(d === "Espaço" ? " " : d))}
                 disabled={d === ""}
                 className="rounded-xl bg-gray-100 py-4 text-xl font-medium text-gray-800 hover:bg-gray-200 disabled:invisible"
               >
-                {d}
+                {d === " " ? "Espaço" : d}
               </button>
             ))}
           </div>
@@ -363,11 +501,41 @@ export default function ClienteVenderPage() {
         </div>
       )}
 
+      {/* Step: Prêmio (1/1, 1/2, ... 5/10) */}
+      {step === "premio" && (
+        <div>
+          <p className="mb-2 text-sm text-gray-500">
+            {extracao?.nome} → {(COTACOES_LABELS[modalidade] ?? modalidade)} {numeros}
+          </p>
+          <p className="mb-4 text-gray-600">Em qual(is) prêmio(s) vale este jogo?</p>
+          <div className="mb-4 grid grid-cols-4 gap-2">
+            {opcoesPremioList.map((op) => (
+              <button
+                key={op}
+                type="button"
+                onClick={() => setPremio(op)}
+                className={`rounded-xl py-3 text-sm font-medium ${
+                  premio === op ? "bg-orange-500 text-white" : "bg-gray-100 text-gray-800"
+                }`}
+              >
+                {op}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={confirmarPremio}
+            className="w-full rounded-xl bg-green-600 py-3 font-semibold text-white"
+          >
+            Continuar
+          </button>
+        </div>
+      )}
+
       {/* Step: Milhar Brinde (opcional) - só se cambista habilitou */}
       {step === "milharBrinde" && cambista?.milharBrinde === "sim" && (
         <div>
           <p className="mb-2 text-sm text-gray-500">
-            {extracao?.nome} → {MODALIDADES.find((m) => m.id === modalidade)?.label} {numeros}
+            {extracao?.nome} → {(COTACOES_LABELS[modalidade] ?? modalidade)} {numeros}
           </p>
           <p className="mb-4 text-gray-600">Milhar brinde (opcional) – 4 dígitos:</p>
           <div className="mb-4 flex h-14 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-50 text-2xl font-mono font-bold">
@@ -406,7 +574,7 @@ export default function ClienteVenderPage() {
       {step === "valor" && cambista && (
         <div>
           <p className="mb-2 text-sm text-gray-500">
-            {extracao?.nome} → {MODALIDADES.find((m) => m.id === modalidade)?.label} {numeros}
+            {extracao?.nome} → {(COTACOES_LABELS[modalidade] ?? modalidade)} {numeros} — prêmio {premio}
             {milharBrinde && <span className="text-green-600"> + Brinde {milharBrinde}</span>}
           </p>
           <p className="mb-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">
@@ -427,7 +595,7 @@ export default function ClienteVenderPage() {
             className="mb-4 w-full rounded-xl border border-gray-300 px-4 py-4 text-xl font-medium"
           />
           <p className="mb-4 text-sm text-gray-500">
-            Cotação: {formatarMoeda(getCotacao(cambista, modalidade!))} (se ganhar)
+            Cotação: {formatarMoeda(getCotacaoEfetiva(cambista, modalidade!))} (se ganhar)
           </p>
           <button
             onClick={confirmarValor}
@@ -448,7 +616,7 @@ export default function ClienteVenderPage() {
           <div className="mb-6 rounded-xl border border-gray-200 p-4">
             <p className="text-sm text-gray-500">{extracao?.nome}</p>
             <p className="mt-1 font-medium">
-              {MODALIDADES.find((m) => m.id === modalidade)?.label} {numeros}
+              {(COTACOES_LABELS[modalidade] ?? modalidade)} {numeros} (prêmio {premio})
               {milharBrinde && <span className="text-green-600"> + Brinde {milharBrinde}</span>}
               {" – "}{formatarMoeda(parseFloat(valor.replace(",", ".")))}
             </p>

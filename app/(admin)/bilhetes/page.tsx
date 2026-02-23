@@ -3,11 +3,14 @@
 import { useState, useEffect } from "react";
 import {
   getBilhetes,
-  getCambistas,
-  getGerentes,
+  getCambistasPorCodigo,
+  getGerentesPorCodigo,
   getExtracoes,
   calcularComissaoBilhete,
+  cancelarBilheteAdmin,
 } from "@/lib/store";
+import { getAdminCodigo } from "@/lib/auth";
+import { COTACOES_LABELS } from "@/lib/cotacoes";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -18,9 +21,11 @@ const MODALIDADES: Record<string, string> = {
   dezena: "Dezena",
   centena: "Centena",
   milhar: "Milhar",
+  ...COTACOES_LABELS,
 };
 
 export default function BilhetesAdminPage() {
+  const codigo = getAdminCodigo();
   const [bilhetes, setBilhetes] = useState(getBilhetes());
   const [filtroGerente, setFiltroGerente] = useState("todos");
   const [filtroCambista, setFiltroCambista] = useState("todos");
@@ -29,15 +34,17 @@ export default function BilhetesAdminPage() {
   const [filtroData, setFiltroData] = useState("");
   const [filtroCodigo, setFiltroCodigo] = useState("");
 
-  const cambistas = getCambistas();
-  const gerentes = getGerentes();
+  const cambistas = getCambistasPorCodigo(codigo ?? "");
+  const gerentes = getGerentesPorCodigo(codigo ?? "");
   const extracoes = getExtracoes();
+  const idsCambistasCodigo = new Set(cambistas.map((c) => c.id));
+  const bilhetesDoCodigo = bilhetes.filter((b) => idsCambistasCodigo.has(b.cambistaId));
 
   useEffect(() => {
     setBilhetes(getBilhetes());
   }, []);
 
-  const filtrar = bilhetes.filter((b) => {
+  const filtrar = bilhetesDoCodigo.filter((b) => {
     const cam = cambistas.find((c) => c.id === b.cambistaId);
     if (!cam) return false;
     if (filtroGerente !== "todos" && cam.gerenteId !== filtroGerente) return false;
@@ -54,6 +61,12 @@ export default function BilhetesAdminPage() {
   });
 
   const getCambistaNome = (id: string) => cambistas.find((c) => c.id === id)?.login ?? "-";
+
+  const handleCancelarAdmin = (b: (typeof filtrar)[0]) => {
+    if (b.situacao === "cancelado") return;
+    if (!confirm(`Cancelar o bilhete ${b.codigo}? O admin pode cancelar a qualquer momento.`)) return;
+    if (cancelarBilheteAdmin(b.id)) setBilhetes(getBilhetes());
+  };
 
   return (
     <div>
@@ -129,12 +142,13 @@ export default function BilhetesAdminPage() {
               <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Jogo</th>
               <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-600">Total</th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Situação</th>
+              <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-600">Ações</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
             {filtrar.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
                   Nenhum bilhete encontrado.
                 </td>
               </tr>
@@ -162,6 +176,17 @@ export default function BilhetesAdminPage() {
                       >
                         {b.situacao}
                       </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {b.situacao !== "cancelado" && (
+                        <button
+                          type="button"
+                          onClick={() => handleCancelarAdmin(b)}
+                          className="rounded bg-red-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600"
+                        >
+                          Cancelar
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );

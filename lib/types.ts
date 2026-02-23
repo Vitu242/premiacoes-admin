@@ -1,5 +1,8 @@
+import type { CotacaoKey } from "./cotacoes";
+
 export interface Gerente {
   id: string;
+  codigo: string; // Código da banca (ex: Lotobrasil, Jaguar) – cada admin vê só os do seu código
   login: string;
   senha: string;
   tipo: string;
@@ -18,6 +21,7 @@ export interface Gerente {
 export interface Cambista {
   id: string;
   gerenteId: string;
+  codigo: string; // Mesmo código da banca do gerente – cliente entra com este código
   login: string;
   senha: string;
   saldo: number;
@@ -29,6 +33,8 @@ export interface Cambista {
   cotacaoC: number;
   cotacaoD: number;
   cotacaoG: number;
+  /** Overrides de cotações por tipo (quando preenchido, o cliente usa estes valores; senão usa cotações padrão) */
+  cotacoes?: Partial<Record<CotacaoKey, number>>;
   milharBrinde: "sim" | "nao";
   endereco: string;
   telefone: string;
@@ -43,11 +49,8 @@ export interface Cambista {
   ultimaPrestacao: string | null;
 }
 
-export type ModalidadeBilhete =
-  | "grupo"
-  | "dezena"
-  | "centena"
-  | "milhar";
+/** Todas as modalidades de aposta (inclui as 4 base e as demais do jogo do bicho). */
+export type ModalidadeBilhete = CotacaoKey;
 
 export interface Extracao {
   id: string;
@@ -60,6 +63,8 @@ export interface ItemBilhete {
   modalidade: ModalidadeBilhete;
   numeros: string;
   valor: number;
+  /** Prêmio(s) do jogo: "1/1" (só 1º), "1/2" (1º ou 2º), ... "5/10" (5º ao 10º). Omitido = 1/1 */
+  premio?: string;
   /** Milhar brinde opcional (4 dígitos) - habilitado nas configurações do cambista */
   milharBrinde?: string;
 }
@@ -85,11 +90,15 @@ export interface Lancamento {
   observacao?: string;
 }
 
+/** Resultado por prêmio (1 = 1º, 2 = 2º, ... 10 = 10º). grupos = "01-02-03-04-05" */
 export interface Resultado {
   id: string;
   extracaoId: string;
   extracaoNome: string;
   data: string; // dd/mm/yy
-  grupos: string; // ex: "01-02-03-04-05"
+  /** 1º prêmio (retrocompat) */
+  grupos: string;
   dezenas?: string;
+  /** Por prêmio: 1..10. premios[1] = grupos do 1º, etc. */
+  premios?: Record<number, string>;
 }

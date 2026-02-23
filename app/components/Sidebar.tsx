@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { getAdminCodigo, CODIGO_CHEFE } from "@/lib/auth";
 
 const menuItems = [
   { href: "/", label: "Prestar Contas" },
@@ -13,6 +14,7 @@ const menuItems = [
   { href: "/lancamentos", label: "Lançamentos" },
   { href: "/resultados", label: "Resultados" },
   { href: "/loterias", label: "Loterias" },
+  { href: "/cotacoes", label: "Cotações" },
   { href: "/configuracoes", label: "Configurações" },
 ];
 
@@ -23,6 +25,8 @@ interface SidebarProps {
 
 export default function Sidebar({ isOpen = true, onClose }: SidebarProps) {
   const pathname = usePathname();
+  const codigo = getAdminCodigo();
+  const isChefe = codigo === CODIGO_CHEFE;
 
   const handleLogout = () => {
     localStorage.removeItem("premiacoes_admin");
@@ -51,6 +55,19 @@ export default function Sidebar({ isOpen = true, onClose }: SidebarProps) {
         }`}
       >
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-4">
+          {isChefe && (
+            <Link
+              href="/gerir-admins"
+              onClick={handleLinkClick}
+              className={`rounded px-4 py-3 text-sm transition-colors ${
+                pathname === "/gerir-admins"
+                  ? "bg-orange-500/90 text-white"
+                  : "text-amber-200 hover:bg-gray-700 hover:text-white"
+              }`}
+            >
+              Gerir admins
+            </Link>
+          )}
           {menuItems.map((item) => (
             <Link
               key={item.href}

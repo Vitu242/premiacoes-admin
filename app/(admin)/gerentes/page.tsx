@@ -3,17 +3,19 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
-  getGerentes,
+  getGerentesPorCodigo,
   setGerentes,
   addGerente,
   updateGerente,
   deleteGerente,
   getCambistas,
 } from "@/lib/store";
+import { getAdminCodigo } from "@/lib/auth";
 import type { Gerente } from "@/lib/types";
 
-function gerenteInicial(): Omit<Gerente, "id" | "criadoEm"> {
+function gerenteInicial(codigo: string): Omit<Gerente, "id" | "criadoEm"> {
   return {
+    codigo,
     login: "",
     senha: "",
     tipo: "Gerente",
@@ -30,15 +32,16 @@ function gerenteInicial(): Omit<Gerente, "id" | "criadoEm"> {
 }
 
 export default function GerentesPage() {
+  const codigo = getAdminCodigo();
   const [gerentes, setGerentesState] = useState<Gerente[]>([]);
   const [filtro, setFiltro] = useState("");
   const [editando, setEditando] = useState<Gerente | null>(null);
   const [novo, setNovo] = useState(false);
-  const [form, setForm] = useState(gerenteInicial());
+  const [form, setForm] = useState(gerenteInicial(codigo ?? "default"));
 
   useEffect(() => {
-    setGerentesState(getGerentes());
-  }, []);
+    if (codigo) setGerentesState(getGerentesPorCodigo(codigo));
+  }, [codigo]);
 
   const filtrar = gerentes.filter((g) =>
     g.login.toLowerCase().includes(filtro.toLowerCase())
@@ -48,6 +51,7 @@ export default function GerentesPage() {
     setEditando(g);
     setNovo(false);
     setForm({
+      codigo: g.codigo ?? "default",
       login: g.login,
       senha: g.senha,
       tipo: g.tipo,
@@ -66,7 +70,7 @@ export default function GerentesPage() {
   const abrirNovo = () => {
     setEditando(null);
     setNovo(true);
-    setForm(gerenteInicial());
+    setForm(gerenteInicial(codigo ?? "default"));
   };
 
   const salvar = () => {
@@ -83,7 +87,7 @@ export default function GerentesPage() {
       }
       updateGerente(editando.id, form);
     }
-    setGerentesState(getGerentes());
+    setGerentesState(getGerentesPorCodigo(codigo ?? ""));
     setEditando(null);
     setNovo(false);
   };
@@ -91,7 +95,7 @@ export default function GerentesPage() {
   const apagar = (id: string) => {
     if (confirm("Apagar este gerente? Os cambistas vinculados serão removidos.")) {
       deleteGerente(id);
-      setGerentesState(getGerentes());
+      setGerentesState(getGerentesPorCodigo(codigo ?? ""));
       setEditando(null);
     }
   };

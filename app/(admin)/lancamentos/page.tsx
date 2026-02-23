@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { getCambistas, getLancamentos, addLancamento } from "@/lib/store";
+import { useState, useEffect, useMemo } from "react";import { getCambistasPorCodigo, getLancamentos, addLancamento } from "@/lib/store";
+import { getAdminCodigo } from "@/lib/auth";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
 export default function LancamentosPage() {
-  const [cambistas] = useState(getCambistas());
+  const codigo = getAdminCodigo();
+  const cambistas = useMemo(() => getCambistasPorCodigo(codigo ?? ""), [codigo]);
   const [lancamentos, setLancamentos] = useState(getLancamentos());
   const [cambistaId, setCambistaId] = useState("");
   const [tipo, setTipo] = useState<"adiantar" | "retirar">("adiantar");
