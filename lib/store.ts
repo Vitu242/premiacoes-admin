@@ -331,7 +331,7 @@ function loadConfig(): AppConfig {
 function saveConfig(c: AppConfig) {
   if (typeof window !== "undefined") {
     localStorage.setItem(CONFIG_KEY, JSON.stringify(c));
-    if (useSupabase) void pushConfigToSupabase(c);
+    if (useSupabase) void pushConfigToSupabase(c as Record<string, unknown>);
   }
 }
 
