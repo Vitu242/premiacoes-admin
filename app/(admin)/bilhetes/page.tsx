@@ -16,13 +16,7 @@ function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-const MODALIDADES: Record<string, string> = {
-  grupo: "Grupo",
-  dezena: "Dezena",
-  centena: "Centena",
-  milhar: "Milhar",
-  ...COTACOES_LABELS,
-};
+const MODALIDADES: Record<string, string> = { ...COTACOES_LABELS };
 
 export default function BilhetesAdminPage() {
   const codigo = getAdminCodigo();
