@@ -34,9 +34,11 @@ export default function BilhetesAdminPage() {
   const idsCambistasCodigo = new Set(cambistas.map((c) => c.id));
   const bilhetesDoCodigo = bilhetes.filter((b) => idsCambistasCodigo.has(b.cambistaId));
 
+  const refreshBilhetes = () => setBilhetes(getBilhetes());
+
   useEffect(() => {
-    setBilhetes(getBilhetes());
-  }, []);
+    refreshBilhetes();
+  }, [codigo]);
 
   const filtrar = bilhetesDoCodigo.filter((b) => {
     const cam = cambistas.find((c) => c.id === b.cambistaId);
@@ -59,7 +61,7 @@ export default function BilhetesAdminPage() {
   const handleCancelarAdmin = (b: (typeof filtrar)[0]) => {
     if (b.situacao === "cancelado") return;
     if (!confirm(`Cancelar o bilhete ${b.codigo}? O admin pode cancelar a qualquer momento.`)) return;
-    if (cancelarBilheteAdmin(b.id)) setBilhetes(getBilhetes());
+    if (cancelarBilheteAdmin(b.id)) refreshBilhetes();
   };
 
   return (
@@ -70,7 +72,7 @@ export default function BilhetesAdminPage() {
         <select
           value={filtroGerente}
           onChange={(e) => setFiltroGerente(e.target.value)}
-          className="rounded border border-gray-300 px-3 py-2 text-sm"
+          className="rounded border border-gray-300 px-3 py-2 text-sm text-black"
         >
           <option value="todos">Todos gerentes</option>
           {gerentes.map((g) => (
@@ -80,7 +82,7 @@ export default function BilhetesAdminPage() {
         <select
           value={filtroCambista}
           onChange={(e) => setFiltroCambista(e.target.value)}
-          className="rounded border border-gray-300 px-3 py-2 text-sm"
+          className="rounded border border-gray-300 px-3 py-2 text-sm text-black"
         >
           <option value="todos">Todos cambistas</option>
           {cambistas.map((c) => (
@@ -90,7 +92,7 @@ export default function BilhetesAdminPage() {
         <select
           value={filtroSituacao}
           onChange={(e) => setFiltroSituacao(e.target.value)}
-          className="rounded border border-gray-300 px-3 py-2 text-sm"
+          className="rounded border border-gray-300 px-3 py-2 text-sm text-black"
         >
           <option value="todos">Todas situações</option>
           <option value="pendente">Pendente</option>
@@ -101,7 +103,7 @@ export default function BilhetesAdminPage() {
         <select
           value={filtroExtracao}
           onChange={(e) => setFiltroExtracao(e.target.value)}
-          className="rounded border border-gray-300 px-3 py-2 text-sm"
+          className="rounded border border-gray-300 px-3 py-2 text-sm text-black"
         >
           <option value="todos">Todas extrações</option>
           {extracoes.map((e) => (
@@ -112,37 +114,50 @@ export default function BilhetesAdminPage() {
           type="date"
           value={filtroData}
           onChange={(e) => setFiltroData(e.target.value)}
-          className="rounded border border-gray-300 px-3 py-2 text-sm"
+          className="rounded border border-gray-300 px-3 py-2 text-sm text-black"
         />
         <input
           type="text"
           placeholder="Nº Bilhete"
           value={filtroCodigo}
           onChange={(e) => setFiltroCodigo(e.target.value)}
-          className="rounded border border-gray-300 px-3 py-2 text-sm"
+          onKeyDown={(e) => e.key === "Enter" && refreshBilhetes()}
+          className="rounded border border-gray-300 px-3 py-2 text-sm text-black"
         />
+        <button
+          type="button"
+          onClick={refreshBilhetes}
+          className="rounded bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600"
+        >
+          Pesquisar
+        </button>
       </div>
 
-      <p className="mb-4 text-sm text-gray-600">{filtrar.length} bilhete(s) encontrado(s)</p>
+      {cambistas.length === 0 && (
+        <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+          Nenhum cambista com o código da banca. Verifique se está logado com o código correto ou crie cambistas em Cambistas.
+        </p>
+      )}
+      <p className="mb-4 text-sm text-black">{filtrar.length} bilhete(s) encontrado(s)</p>
 
       <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Código</th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Cambista</th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Extração</th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Data</th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Jogo</th>
-              <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-600">Total</th>
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Situação</th>
-              <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-600">Ações</th>
+              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-black">Código</th>
+              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-black">Cambista</th>
+              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-black">Extração</th>
+              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-black">Data</th>
+              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-black">Jogo</th>
+              <th className="px-4 py-3 text-right text-xs font-medium uppercase text-black">Total</th>
+              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-black">Situação</th>
+              <th className="px-4 py-3 text-right text-xs font-medium uppercase text-black">Ações</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
             {filtrar.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
+                <td colSpan={8} className="px-4 py-8 text-center text-black">
                   Nenhum bilhete encontrado.
                 </td>
               </tr>
@@ -153,12 +168,12 @@ export default function BilhetesAdminPage() {
                 const jogo = b.itens.map((i) => `${MODALIDADES[i.modalidade] || i.modalidade} ${i.numeros}${i.milharBrinde ? ` + Brinde ${i.milharBrinde}` : ""}`).join(" | ");
                 return (
                   <tr key={b.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 font-mono text-sm font-medium text-gray-800">{b.codigo}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{getCambistaNome(b.cambistaId)}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{b.extracaoNome}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{b.data.replace(",", " ")}</td>
-                    <td className="max-w-[200px] truncate px-4 py-3 text-xs text-gray-600" title={jogo}>{jogo}</td>
-                    <td className="px-4 py-3 text-right text-sm font-medium text-gray-800">{formatarMoeda(b.total)}</td>
+                    <td className="px-4 py-3 font-mono text-sm font-medium text-black">{b.codigo}</td>
+                    <td className="px-4 py-3 text-sm text-black">{getCambistaNome(b.cambistaId)}</td>
+                    <td className="px-4 py-3 text-sm text-black">{b.extracaoNome}</td>
+                    <td className="px-4 py-3 text-sm text-black">{b.data.replace(",", " ")}</td>
+                    <td className="max-w-[200px] truncate px-4 py-3 text-xs text-black" title={jogo}>{jogo}</td>
+                    <td className="px-4 py-3 text-right text-sm font-medium text-black">{formatarMoeda(b.total)}</td>
                     <td className="px-4 py-3">
                       <span
                         className={`rounded-full px-2 py-1 text-xs font-medium ${

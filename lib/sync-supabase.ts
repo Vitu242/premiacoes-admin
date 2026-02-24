@@ -131,6 +131,25 @@ export async function initFromSupabase(): Promise<boolean> {
       write(KEYS.cambistas, [...fromSupabase, ...locais]);
     }
 
+    // Recalcula entrada dos cambistas a partir dos bilhetes (garante saldo disponível correto após sync)
+    const bilhetesData = (bilhetesRes.data?.length ? bilhetesRes.data : local(KEYS.bilhetes)) as Array<{ cambista_id?: string; cambistaId?: string; total?: number; situacao?: string }>;
+    const cambistasData = local(KEYS.cambistas) as Array<{ id: string; entrada?: number }>;
+    if (bilhetesData?.length && cambistasData?.length) {
+      const entradaPorCambista: Record<string, number> = {};
+      for (const b of bilhetesData) {
+        const cid = b.cambista_id ?? b.cambistaId;
+        if (!cid || b.situacao === "cancelado") continue;
+        entradaPorCambista[cid] = (entradaPorCambista[cid] ?? 0) + Number(b.total ?? 0);
+      }
+      const atualizados = cambistasData.map((c) => {
+        const entrada = entradaPorCambista[c.id];
+        if (entrada === undefined) return c;
+        return { ...c, entrada };
+      });
+      const hasChange = atualizados.some((c, i) => c.entrada !== (cambistasData[i] as { entrada?: number }).entrada);
+      if (hasChange) write(KEYS.cambistas, atualizados);
+    }
+
     if (extracoesRes.data?.length) write(KEYS.extracoes, extracoesRes.data.map((r: Record<string, unknown>) => ({
       id: r.id,
       nome: r.nome ?? "",

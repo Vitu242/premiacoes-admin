@@ -32,7 +32,7 @@ export default function ResultadosAdminPage() {
   const temResultado = (extId: string) =>
     resultados.some((r) => r.extracaoId === extId && r.data.includes(dataNorm));
 
-  const handleSalvar = (e: React.FormEvent) => {
+  const handleSalvar = async (e: React.FormEvent) => {
     e.preventDefault();
     const ext = extracoes.find((e) => e.id === extracaoId);
     if (!ext) return;
@@ -43,7 +43,7 @@ export default function ResultadosAdminPage() {
     }
     const premiosObj: Record<number, string> = { 1: grupos1 };
     for (let p = 2; p <= 10; p++) if (premios[p]?.trim()) premiosObj[p] = premios[p].trim();
-    addResultado({
+    await addResultado({
       extracaoId: ext.id,
       extracaoNome: ext.nome,
       data: dataNorm,

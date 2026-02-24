@@ -1,17 +1,22 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 export default function ClienteRegulamentoPage() {
+  const router = useRouter();
   return (
     <div className="min-h-screen bg-white p-4 pb-24">
       <div className="mb-4 flex items-center gap-2">
-        <Link href="/cliente" className="rounded p-2 text-gray-600 hover:bg-gray-100">
+        <button
+          type="button"
+          onClick={() => router.back()}
+          className="rounded p-2 text-gray-600 hover:bg-gray-100"
+          aria-label="Voltar"
+        >
           <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-        </Link>
+        </button>
         <h1 className="text-lg font-bold text-gray-800">Regulamento</h1>
       </div>
 

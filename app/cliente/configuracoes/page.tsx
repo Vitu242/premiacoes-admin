@@ -1,15 +1,20 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 const VERSAO = "1.0.0";
 
 export default function ClienteConfiguracoesPage() {
+  const router = useRouter();
   return (
     <div className="min-h-screen bg-white p-4 pb-24">
-      <Link href="/cliente" className="mb-4 inline-flex items-center text-orange-600 hover:underline">
+      <button
+        type="button"
+        onClick={() => router.back()}
+        className="mb-4 inline-flex items-center text-orange-600 hover:underline"
+      >
         ← Voltar
-      </Link>
+      </button>
       <h1 className="text-2xl font-bold text-gray-800">Configurações</h1>
       <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
         <p className="text-sm text-gray-500">Versão do app</p>

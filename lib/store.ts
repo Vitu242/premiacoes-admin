@@ -2,6 +2,7 @@
 
 import type { Gerente, Cambista, Extracao, Bilhete, ItemBilhete, Lancamento, Resultado, ModalidadeBilhete } from "./types";
 import { pushToSupabase, useSupabase, pushConfigToSupabase } from "./sync-supabase";
+import { CODIGO_CHEFE } from "./auth";
 import {
   COTACOES_PADROES_DEFAULT,
   type CotacaoKey,
@@ -90,9 +91,19 @@ export function getGerentes(): Gerente[] {
   return g.map((x) => ({ ...x, codigo: (x as { codigo?: string }).codigo ?? "default" }));
 }
 
-/** Retorna gerentes do código da banca (admin vê só os do seu código). */
+/** Verifica se o código da banca corresponde (Lotobrasil e default tratados como a mesma banca). */
+function codigoCorresponde(codigoBanca: string, codigoEntidade: string): boolean {
+  const c = codigoEntidade ?? "default";
+  if (c === codigoBanca) return true;
+  if (codigoBanca === CODIGO_CHEFE && c === "default") return true;
+  if (codigoBanca === "default" && c === CODIGO_CHEFE) return true;
+  return false;
+}
+
+/** Retorna gerentes do código da banca (admin vê só os do seu código). Lotobrasil = default. */
 export function getGerentesPorCodigo(codigo: string): Gerente[] {
-  return getGerentes().filter((g) => (g.codigo ?? "default") === codigo);
+  if (!codigo) return [];
+  return getGerentes().filter((g) => codigoCorresponde(codigo, g.codigo ?? "default"));
 }
 
 export function getCambistas(): Cambista[] {
@@ -160,9 +171,10 @@ export function getCambistas(): Cambista[] {
   return c.map((x) => ({ ...x, codigo: (x as { codigo?: string }).codigo ?? "default" }));
 }
 
-/** Retorna cambistas do código da banca (admin vê só os do seu código; cliente entra com esse código). */
+/** Retorna cambistas do código da banca (admin vê só os do seu código; cliente entra com esse código). Lotobrasil = default. */
 export function getCambistasPorCodigo(codigo: string): Cambista[] {
-  return getCambistas().filter((c) => (c.codigo ?? "default") === codigo);
+  if (!codigo) return [];
+  return getCambistas().filter((c) => codigoCorresponde(codigo, c.codigo ?? "default"));
 }
 
 export function setGerentes(gerentes: Gerente[]) {
@@ -447,7 +459,7 @@ export function getBilhetes(): Bilhete[] {
   return loadBilhetes();
 }
 
-export function addBilhete(b: Omit<Bilhete, "id" | "codigo">): Bilhete {
+export async function addBilhete(b: Omit<Bilhete, "id" | "codigo">): Promise<Bilhete> {
   const check = podeRealizarVenda(b.cambistaId, b.total);
   if (!check.ok) throw new Error(check.erro ?? "Saldo insuficiente para esta venda.");
 
@@ -467,6 +479,10 @@ export function addBilhete(b: Omit<Bilhete, "id" | "codigo">): Bilhete {
       entrada: (cam.entrada ?? 0) + b.total,
       comissao: (cam.comissao ?? 0) + comissaoBilhete,
     });
+  }
+  if (useSupabase) {
+    await pushToSupabase("bilhetes", getBilhetes());
+    await pushToSupabase("cambistas", getCambistas());
   }
   return novo;
 }
@@ -593,12 +609,17 @@ export function getResultados(): Resultado[] {
   return loadResultados();
 }
 
-export function addResultado(r: Omit<Resultado, "id">): Resultado {
+export async function addResultado(r: Omit<Resultado, "id">): Promise<Resultado> {
   const lista = getResultados();
   const novo: Resultado = { ...r, id: String(Date.now()) };
   lista.push(novo);
   saveResultados(lista);
   atualizarBilhetesComResultado(novo);
+  if (useSupabase) {
+    await pushToSupabase("resultados", getResultados());
+    await pushToSupabase("bilhetes", getBilhetes());
+    await pushToSupabase("cambistas", getCambistas());
+  }
   return novo;
 }
 
@@ -617,6 +638,13 @@ export function getResultadoByExtracaoData(extracaoId: string, dataBilhete: stri
   if (!dataNorm) return null;
   const resultados = getResultados();
   return resultados.find((r) => r.extracaoId === extracaoId && normalizarDataBilhete(r.data) === dataNorm) ?? null;
+}
+
+/** Reconferir bilhetes com todos os resultados (útil após sync: garante que bilhetes pendentes sejam marcados pago/perdedor). */
+export function reconferirBilhetesComResultados(): void {
+  for (const r of getResultados()) {
+    atualizarBilhetesComResultado(r);
+  }
 }
 
 /** Ao adicionar resultado, marca bilhetes daquela extração/data como pago ou perdedor. Prêmio pago vira Saída no caixa do cambista. */

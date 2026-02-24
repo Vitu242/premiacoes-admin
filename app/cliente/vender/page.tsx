@@ -19,12 +19,6 @@ import type { CotacaoKey } from "@/lib/cotacoes";
 
 type Step = "extracao" | "modalidade" | "variante" | "numeros" | "premio" | "milharBrinde" | "valor" | "confirmar";
 
-function opcoesPremio(max: 5 | 10): string[] {
-  const out: string[] = [];
-  for (let i = 1; i <= 5; i++) for (let j = i; j <= max; j++) out.push(`${i}/${j}`);
-  return out;
-}
-
 /** 12 modalidades da tela do cliente (como na imagem). Com variantes = passo extra para escolher 1/2, 1/5, etc. */
 const MODALIDADES_TELA: { label: string; key?: CotacaoKey; variantes?: { key: CotacaoKey; label: string }[] }[] = [
   { label: "Milhar", key: "milhar" },
@@ -72,13 +66,13 @@ export default function ClienteVenderPage() {
   const [premio, setPremio] = useState("1/1");
   const [milharBrinde, setMilharBrinde] = useState("");
   const [valor, setValor] = useState("");
+  const [valorModo, setValorModo] = useState<"dividir" | "multiplicar">("multiplicar");
   const [erro, setErro] = useState("");
   const [sucesso, setSucesso] = useState<{ codigo: string } | null>(null);
 
   const extracoes = getExtracoes().filter((e) => e.ativa && extracaoAceitaApostas(e.encerra));
   const cambista = cambistaId ? getCambistas().find((c) => c.id === cambistaId) : null;
   const premioMax = getPremioMax();
-  const opcoesPremioList = opcoesPremio(premioMax);
 
   useEffect(() => {
     const auth = localStorage.getItem("premiacoes_cliente");
@@ -98,7 +92,7 @@ export default function ClienteVenderPage() {
 
   const voltar = () => {
     setErro("");
-    if (step === "extracao") router.push("/cliente");
+    if (step === "extracao") router.back();
     else if (step === "modalidade") setStep("extracao");
     else if (step === "variante") { setStep("modalidade"); setModalidadeGroupIndex(null); }
     else if (step === "numeros") {
@@ -143,34 +137,23 @@ export default function ClienteVenderPage() {
     if (!modalidade) return;
     const config = getModalidadeConfig(modalidade);
     if (d === " ") {
-      if (config.count !== 1) return;
       const parts = numeros.trim().split(/\s+/);
       const last = parts[parts.length - 1] ?? "";
-      if (last.length !== config.maxDigits) return;
+      if (last.length < config.minDigits) return;
+      if (config.count > 1 && parts.length >= config.count) return;
       setNumeros(numeros.trim() + " ");
       setErro("");
       return;
     }
-    if (config.count > 1) {
-      const parts = numeros.trim().split(/\s+/);
-      const last = parts[parts.length - 1] ?? "";
-      const novaLast = last + d;
-      if (novaLast.length > config.maxDigits) return;
-      const n = parseInt(novaLast, 10);
-      if (n > config.max || (config.max === 25 && (n < 1 || n > 25))) return;
-      parts[parts.length - 1] = novaLast;
-      if (parts.length > config.count) return;
-      setNumeros(parts.join(" ").trim());
-    } else {
-      const parts = numeros.trim().split(/\s+/);
-      const last = parts[parts.length - 1] ?? "";
-      const novaLast = last + d;
-      if (novaLast.length > config.maxDigits) return;
-      const n = parseInt(novaLast, 10);
-      if (n > config.max || (config.max === 25 && (n < 1 || n > 25))) return;
-      parts[parts.length - 1] = novaLast;
-      setNumeros(parts.join(" ").trim());
-    }
+    const parts = numeros.trim().split(/\s+/);
+    const last = parts[parts.length - 1] ?? "";
+    const novaLast = last + d;
+    if (novaLast.length > config.maxDigits) return;
+    const n = parseInt(novaLast, 10);
+    if (n > config.max || (config.max === 25 && (n < 1 || n > 25))) return;
+    parts[parts.length - 1] = novaLast;
+    if (config.count > 1 && parts.length > config.count) return;
+    setNumeros(parts.join(" ").trim());
     setErro("");
   };
 
@@ -208,7 +191,7 @@ export default function ClienteVenderPage() {
     }
     const premioFixo = getPremioFixoFromKey(modalidade);
     if (premioFixo) { setPremio(premioFixo); setStep(cambista?.milharBrinde === "sim" ? "milharBrinde" : "valor"); setValor(""); }
-    else { setStep("premio"); setPremio("1/1"); }
+    else { setStep("premio"); setPremio(""); }
     setErro("");
   };
 
@@ -220,8 +203,54 @@ export default function ClienteVenderPage() {
     return null;
   }
 
+  const adicionarDigitoPremio = (d: string) => {
+    if (d === "⌫") {
+      apagarDigitoPremio();
+      return;
+    }
+    const num = parseInt(d, 10);
+    if (isNaN(num) || num < 0 || num > 9) return;
+
+    if (!premio.includes("/")) {
+      if (premio.length >= 1) return;
+      if (num < 1 || num > 5) return;
+      setPremio(`${num}/`);
+    } else {
+      const [a, b] = premio.split("/");
+      const primeiro = parseInt(a ?? "1", 10);
+      const segundoAtual = b ?? "";
+      if (segundoAtual.length >= 2) return;
+      const novoSegundo = segundoAtual + d;
+      const segundoNum = parseInt(novoSegundo, 10);
+      if (segundoNum < primeiro || segundoNum > premioMax) return;
+      setPremio(`${a}/${novoSegundo}`);
+    }
+    setErro("");
+  };
+
+  const apagarDigitoPremio = () => {
+    if (!premio.includes("/")) {
+      setPremio("");
+    } else {
+      const [a, b] = premio.split("/");
+      const segundoAtual = b ?? "";
+      if (segundoAtual.length > 0) {
+        setPremio(`${a}/${segundoAtual.slice(0, -1)}`);
+      } else {
+        setPremio(a ?? "");
+      }
+    }
+  };
+
   const confirmarPremio = () => {
     setErro("");
+    const [a, b] = premio.split("/");
+    const primeiro = parseInt(a ?? "0", 10);
+    const segundo = parseInt(b ?? "0", 10);
+    if (!a || !b || primeiro < 1 || primeiro > 5 || segundo < primeiro || segundo > premioMax) {
+      setErro("Digite o prêmio no formato 1/5 (ex: 1º ao 5º).");
+      return;
+    }
     if (cambista?.milharBrinde === "sim") {
       setStep("milharBrinde");
       setMilharBrinde("");
@@ -259,9 +288,15 @@ export default function ClienteVenderPage() {
     setErro("");
   };
 
+  const qtdJogos = Math.max(1, numeros.trim().split(/\s+/).filter(Boolean).length);
+  const valorDigitado = parseFloat(valor.replace(",", ".")) || 0;
+  const valorTotal = valorModo === "dividir"
+    ? valorDigitado
+    : valorDigitado * qtdJogos;
+  const valorPorJogo = qtdJogos >= 1 ? valorTotal / qtdJogos : valorTotal;
+
   const confirmarValor = () => {
-    const v = parseFloat(valor.replace(",", "."));
-    if (isNaN(v) || v <= 0) {
+    if (isNaN(valorDigitado) || valorDigitado <= 0) {
       setErro("Informe um valor válido.");
       return;
     }
@@ -269,12 +304,11 @@ export default function ClienteVenderPage() {
     setErro("");
   };
 
-  const finalizarVenda = () => {
+  const finalizarVenda = async () => {
     if (!extracao || !modalidade || !cambistaId || !cambista) return;
-    const v = parseFloat(valor.replace(",", "."));
-    if (isNaN(v) || v <= 0) return;
+    if (isNaN(valorDigitado) || valorDigitado <= 0) return;
 
-    const check = podeRealizarVenda(cambistaId, v);
+    const check = podeRealizarVenda(cambistaId, valorTotal);
     if (!check.ok) {
       setErro(check.erro ?? "Saldo insuficiente.");
       return;
@@ -284,16 +318,16 @@ export default function ClienteVenderPage() {
       const item: ItemBilhete = {
         modalidade,
         numeros,
-        valor: v,
+        valor: valorTotal,
         premio: premio || "1/1",
         ...(milharBrinde.length === 4 && { milharBrinde }),
       };
-      const bilhete = addBilhete({
+      const bilhete = await addBilhete({
         cambistaId,
         extracaoId: extracao.id,
         extracaoNome: extracao.nome,
         itens: [item],
-        total: v,
+        total: valorTotal,
         data: new Date().toLocaleString("pt-BR"),
         situacao: "pendente",
       });
@@ -305,6 +339,7 @@ export default function ClienteVenderPage() {
       setPremio("1/1");
       setMilharBrinde("");
       setValor("");
+      setValorModo("multiplicar");
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao finalizar venda.");
     }
@@ -324,7 +359,7 @@ export default function ClienteVenderPage() {
       <div className="min-h-screen bg-white p-4 pb-24">
         <div className="mb-4 flex items-center gap-2">
           <button
-            onClick={() => router.push("/cliente")}
+            onClick={() => router.back()}
             className="rounded p-2 text-gray-600 hover:bg-gray-100"
             aria-label="Voltar"
           >
@@ -341,10 +376,10 @@ export default function ClienteVenderPage() {
             Você não tem limite disponível para realizar vendas. Peça ao administrador para adicionar saldo.
           </p>
           <button
-            onClick={() => router.push("/cliente")}
+            onClick={() => router.back()}
             className="mt-6 w-full rounded-xl bg-amber-600 py-3 font-semibold text-white"
           >
-            Voltar ao início
+            Voltar
           </button>
         </div>
       </div>
@@ -474,21 +509,24 @@ export default function ClienteVenderPage() {
           <p className="mb-2 text-sm text-gray-500">{extracao?.nome} → {COTACOES_LABELS[modalidade] ?? modalidade}</p>
           <p className="mb-2 text-gray-600">
             {getModalidadeConfig(modalidade).count > 1
-              ? `Digite ${getModalidadeConfig(modalidade).count} números separados por espaço:`
-              : "Digite um ou mais números (separados por espaço para vários):"}
+              ? `Digite ${getModalidadeConfig(modalidade).count} números separados por espaço (ou mais, para vários jogos):`
+              : "Digite um ou mais números. Use Espaço para adicionar outro:"}
           </p>
-          <div className="mb-4 flex min-h-14 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-50 px-2 py-3 text-xl font-mono font-bold break-all text-center">
+          <div className="mb-4 flex min-h-14 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-50 px-2 py-3 text-xl font-mono font-bold break-all text-center text-black">
             {numeros || "—"}
           </div>
+          <div className="mb-2 flex items-center justify-end text-sm text-gray-500">
+            {numeros.trim().split(/\s+/).filter(Boolean).length} jogo(s)
+          </div>
           <div className="grid grid-cols-3 gap-3 mb-4">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9", getModalidadeConfig(modalidade).count === 1 ? "Espaço" : "", "0", "⌫"].map((d) => (
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "Espaço", "0", "⌫"].map((d) => (
               <button
                 key={d || "empty"}
                 onClick={() => (d === "⌫" ? apagarDigito() : adicionarDigito(d === "Espaço" ? " " : d))}
                 disabled={d === ""}
                 className="rounded-xl bg-gray-100 py-4 text-xl font-medium text-gray-800 hover:bg-gray-200 disabled:invisible"
               >
-                {d === " " ? "Espaço" : d}
+                {d}
               </button>
             ))}
           </div>
@@ -501,24 +539,27 @@ export default function ClienteVenderPage() {
         </div>
       )}
 
-      {/* Step: Prêmio (1/1, 1/2, ... 5/10) */}
+      {/* Step: Prêmio (digitar ex: 1/5 = 1º ao 5º) */}
       {step === "premio" && (
         <div>
           <p className="mb-2 text-sm text-gray-500">
             {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros}
           </p>
-          <p className="mb-4 text-gray-600">Em qual(is) prêmio(s) vale este jogo?</p>
-          <div className="mb-4 grid grid-cols-4 gap-2">
-            {opcoesPremioList.map((op) => (
+          <p className="mb-2 text-gray-600">Em qual(is) prêmio(s) vale este jogo?</p>
+          <p className="mb-4 text-sm text-gray-500">Exemplo: 1/5 = do 1º ao 5º prêmio (digite e a barra aparece)</p>
+          <div className="mb-4 flex min-h-14 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-50 px-2 py-3 text-2xl font-mono font-bold text-black">
+            {premio || "—"}
+          </div>
+          <div className="mb-4 grid grid-cols-3 gap-3">
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map((d, i) => (
               <button
-                key={op}
+                key={d || `empty-${i}`}
                 type="button"
-                onClick={() => setPremio(op)}
-                className={`rounded-xl py-3 text-sm font-medium ${
-                  premio === op ? "bg-orange-500 text-white" : "bg-gray-100 text-gray-800"
-                }`}
+                onClick={() => d && adicionarDigitoPremio(d)}
+                disabled={d === ""}
+                className="rounded-xl bg-gray-100 py-4 text-xl font-medium text-gray-800 hover:bg-gray-200 disabled:invisible"
               >
-                {op}
+                {d === "⌫" ? "⌫" : d}
               </button>
             ))}
           </div>
@@ -538,7 +579,7 @@ export default function ClienteVenderPage() {
             {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros}
           </p>
           <p className="mb-4 text-gray-600">Milhar brinde (opcional) – 4 dígitos:</p>
-          <div className="mb-4 flex h-14 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-50 text-2xl font-mono font-bold">
+          <div className="mb-4 flex h-14 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-50 text-2xl font-mono font-bold text-black">
             {milharBrinde || "—"}
           </div>
           <div className="grid grid-cols-3 gap-3 mb-4">
@@ -594,12 +635,42 @@ export default function ClienteVenderPage() {
             onChange={(e) => setValor(e.target.value.replace(/[^0-9,]/g, ""))}
             className="mb-4 w-full rounded-xl border border-gray-300 px-4 py-4 text-xl font-medium"
           />
+          {qtdJogos > 1 && (
+            <div className="mb-4 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setValorModo("dividir")}
+                className={`rounded-xl border-2 p-4 text-left transition ${
+                  valorModo === "dividir"
+                    ? "border-green-500 bg-green-50 text-green-800"
+                    : "border-gray-200 bg-gray-50 text-gray-600"
+                }`}
+              >
+                <div className="text-sm font-medium">Dividir</div>
+                <div className="text-lg font-bold">{formatarMoeda(valorTotal)}</div>
+                <div className="text-xs text-gray-500">Total ÷ {qtdJogos} = {formatarMoeda(valorPorJogo)}/jogo</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setValorModo("multiplicar")}
+                className={`rounded-xl border-2 p-4 text-left transition ${
+                  valorModo === "multiplicar"
+                    ? "border-green-500 bg-green-50 text-green-800"
+                    : "border-gray-200 bg-gray-50 text-gray-600"
+                }`}
+              >
+                <div className="text-sm font-medium">Multiplicar</div>
+                <div className="text-lg font-bold">{formatarMoeda(valorTotal)}</div>
+                <div className="text-xs text-gray-500">{formatarMoeda(valorDigitado)} × {qtdJogos} jogos</div>
+              </button>
+            </div>
+          )}
           <p className="mb-4 text-sm text-gray-500">
             Cotação: {formatarMoeda(getCotacaoEfetiva(cambista, modalidade!))} (se ganhar)
           </p>
           <button
             onClick={confirmarValor}
-            disabled={getSaldoDisponivel(cambista) <= 0}
+            disabled={getSaldoDisponivel(cambista) <= 0 || valorTotal <= 0}
             className="w-full rounded-xl bg-green-600 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             Continuar
@@ -618,12 +689,12 @@ export default function ClienteVenderPage() {
             <p className="mt-1 font-medium">
               {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros} (prêmio {premio})
               {milharBrinde && <span className="text-green-600"> + Brinde {milharBrinde}</span>}
-              {" – "}{formatarMoeda(parseFloat(valor.replace(",", ".")))}
+              {" – "}{formatarMoeda(valorTotal)}
             </p>
           </div>
           <button
             onClick={finalizarVenda}
-            disabled={!podeRealizarVenda(cambista.id, parseFloat(valor.replace(",", ".")) || 0).ok}
+            disabled={!podeRealizarVenda(cambista.id, valorTotal).ok}
             className="w-full rounded-xl bg-green-600 py-4 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             Finalizar venda

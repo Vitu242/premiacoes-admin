@@ -60,7 +60,7 @@ export default function ClienteBilhetePage() {
     setCodigoBanca(c || "");
   }, [router]);
 
-  useEffect(() => {
+  const aplicarFiltros = () => {
     if (!cambistaId) return;
     let lista = getBilhetes().filter((b) => b.cambistaId === cambistaId);
     if (filtroSituacao !== "todos") {
@@ -75,6 +75,10 @@ export default function ClienteBilhetePage() {
       lista = lista.filter((b) => b.codigo.includes(filtroCodigo.trim()));
     }
     setBilhetes(lista.sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime()));
+  };
+
+  useEffect(() => {
+    aplicarFiltros();
   }, [cambistaId, filtroSituacao, filtroData, filtroCodigo]);
 
   const cambista = cambistaId ? cambistas.find((c) => c.id === cambistaId) : null;
@@ -119,11 +123,16 @@ export default function ClienteBilhetePage() {
     <div className="min-h-screen bg-[#f5f0e8] pb-24">
       {/* Header */}
       <header className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-4">
-        <Link href="/cliente" className="rounded p-2 text-gray-600 hover:bg-gray-100">
+        <button
+          type="button"
+          onClick={() => router.back()}
+          className="rounded p-2 text-gray-600 hover:bg-gray-100"
+          aria-label="Voltar"
+        >
           <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-        </Link>
+        </button>
         <h1 className="text-lg font-bold text-gray-800">{bancaNome}</h1>
         <div className="w-10" />
       </header>
@@ -156,7 +165,8 @@ export default function ClienteBilhetePage() {
             className="flex-1 min-w-[100px] rounded border border-gray-300 px-3 py-2 text-sm"
           />
           <button
-            onClick={() => {}}
+            type="button"
+            onClick={() => aplicarFiltros()}
             className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
           >
             Buscar

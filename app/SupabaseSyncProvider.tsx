@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSupabase, initFromSupabase } from "@/lib/sync-supabase";
+import { reconferirBilhetesComResultados } from "@/lib/store";
 
 const SYNC_TIMEOUT_MS = 8000;
 
@@ -18,7 +19,10 @@ export function SupabaseSyncProvider({ children }: { children: React.ReactNode }
       if (!cancelled) setReady(true);
     }, SYNC_TIMEOUT_MS);
     initFromSupabase()
-      .then(() => { if (!cancelled) setReady(true); })
+      .then(() => {
+        reconferirBilhetesComResultados();
+        if (!cancelled) setReady(true);
+      })
       .catch(() => { if (!cancelled) setReady(true); })
       .finally(() => clearTimeout(timeout));
     return () => { cancelled = true; clearTimeout(timeout); };
