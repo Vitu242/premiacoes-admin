@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { getCambistasPorCodigo } from "@/lib/store";
+import { getCambistasPorCodigo, updateCambistaUltimoAcesso } from "@/lib/store";
 
 export default function ClienteLoginPage() {
   const router = useRouter();
@@ -26,6 +26,7 @@ export default function ClienteLoginPage() {
     );
 
     if (cambista && cambista.status === "ativo") {
+      updateCambistaUltimoAcesso(cambista.id);
       localStorage.setItem(
         "premiacoes_cliente",
         JSON.stringify({

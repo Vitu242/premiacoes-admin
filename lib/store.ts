@@ -1,6 +1,6 @@
 "use client";
 
-import type { Gerente, Cambista, Extracao, Bilhete, ItemBilhete, Lancamento, Resultado, ModalidadeBilhete } from "./types";
+import type { Gerente, Cambista, Extracao, Bilhete, ItemBilhete, Lancamento, Resultado, ModalidadeBilhete, Sorteio } from "./types";
 import { pushToSupabase, useSupabase, pushConfigToSupabase } from "./sync-supabase";
 import { CODIGO_CHEFE } from "./auth";
 import {
@@ -9,7 +9,7 @@ import {
   type CotacoesPadroes,
 } from "./cotacoes";
 import { getExtracoesPadrao } from "./extracoes-padrao";
-import { conferirBilhete } from "./conferencia";
+import { conferirBilhete, getPremioDivisor } from "./conferencia";
 
 const GERENTES_KEY = "premiacoes_gerentes";
 const CAMBISTAS_KEY = "premiacoes_cambistas";
@@ -17,16 +17,115 @@ const EXTRACOES_KEY = "premiacoes_extracoes";
 const BILHETES_KEY = "premiacoes_bilhetes";
 const LANCAMENTOS_KEY = "premiacoes_lancamentos";
 const RESULTADOS_KEY = "premiacoes_resultados";
+const SORTEIOS_KEY = "premiacoes_sorteios";
 const CONFIG_KEY = "premiacoes_config";
 const COTACOES_PADROES_KEY = "premiacoes_cotacoes_padroes";
+
+/** Comissões padrão usadas ao criar novo cambista. */
+export interface ComissoesPadrao {
+  comissaoMilhar: number;
+  comissaoCentena: number;
+  comissaoDezena: number;
+  comissaoGrupo: number;
+}
+
+/** Configuração global de Milhar Brinde */
+export interface MilharBrindeGlobal {
+  /** "nao" = desativado; "valor_fixo" = prêmio fixo; "valor_multiplicado" = multiplica o valor apostado */
+  tipo: "nao" | "valor_fixo" | "valor_multiplicado";
+  /** Valor mínimo da aposta para ativar (quando tipo !== "nao") */
+  valorMinimoAtivar?: number;
+  /** Prêmio fixo em R$ quando tipo === "valor_fixo" */
+  premioFixo?: number;
+}
 
 export interface AppConfig {
   tempoCancelamentoMinutos: number;
   /** Até qual prêmio o cliente pode apostar: 5 = só 1/5, 10 = até 1/10 */
   premioMax: 5 | 10;
+  /** Se falso, o cliente não pode realizar novas apostas. */
+  apostasAtivas: boolean;
+  /** Texto impresso/exibido ao final do bilhete para o cliente. */
+  textoRodapeBilhete: string;
+  /** Texto do regulamento exibido ao cliente. */
+  regulamento: string;
+  /** Comissões padrão aplicadas ao criar novo cambista. */
+  comissoesPadrao?: ComissoesPadrao;
+  /** Tempo em minutos para imprimir segunda via do bilhete (a partir da aposta). 0 = sem limite. */
+  tempoSegundaViaMinutos?: number;
+  /** Quantidade de dias de inatividade para inativar cambista. 0 = desativado. */
+  diasExcluirCambistaInativo?: number;
+  /** Se true, baixa automática de apostas ao sair resultado. */
+  baixaAutomatica?: boolean;
+  /** Configuração global de Milhar Brinde (sobrescreve/refina o do cambista). */
+  milharBrindeGlobal?: MilharBrindeGlobal;
+  /** Se true, gerente pode cancelar apostas no painel. Se false, só o chefe. */
+  gerentePodeCancelarAposta?: boolean;
+  /** Percentual de lucro da banca na loteria instantânea (0–100). */
+  lucroBancaInstantaneaPercent?: number;
 }
 
-const CONFIG_DEFAULT: AppConfig = { tempoCancelamentoMinutos: 5, premioMax: 10 };
+/** Estatísticas da loteria instantânea (Venda, Prêmio, Comissão). */
+export interface InstantaneaStats {
+  venda: number;
+  premio: number;
+  comissao: number;
+}
+
+const COMISSOES_PADRAO_DEFAULT: ComissoesPadrao = {
+  comissaoMilhar: 20,
+  comissaoCentena: 20,
+  comissaoDezena: 17,
+  comissaoGrupo: 17,
+};
+
+const CONFIG_DEFAULT: AppConfig = {
+  tempoCancelamentoMinutos: 5,
+  premioMax: 10,
+  apostasAtivas: true,
+  textoRodapeBilhete:
+    "Confira seu bilhete, a banca não se responsabiliza por qualquer erro do cambista.",
+  regulamento: "",
+  comissoesPadrao: COMISSOES_PADRAO_DEFAULT,
+  tempoSegundaViaMinutos: 60,
+  diasExcluirCambistaInativo: 0,
+  baixaAutomatica: true,
+  milharBrindeGlobal: { tipo: "valor_multiplicado", valorMinimoAtivar: 0 },
+  gerentePodeCancelarAposta: true,
+  lucroBancaInstantaneaPercent: 30,
+};
+
+const INSTANTANEA_STATS_KEY = "premiacoes_instantanea_stats";
+
+function loadInstantaneaStats(): InstantaneaStats {
+  if (typeof window === "undefined") return { venda: 0, premio: 0, comissao: 0 };
+  try {
+    const data = localStorage.getItem(INSTANTANEA_STATS_KEY);
+    if (!data) return { venda: 0, premio: 0, comissao: 0 };
+    const p = JSON.parse(data);
+    return {
+      venda: typeof p.venda === "number" ? p.venda : 0,
+      premio: typeof p.premio === "number" ? p.premio : 0,
+      comissao: typeof p.comissao === "number" ? p.comissao : 0,
+    };
+  } catch {
+    return { venda: 0, premio: 0, comissao: 0 };
+  }
+}
+
+function saveInstantaneaStats(s: InstantaneaStats) {
+  if (typeof window !== "undefined") {
+    localStorage.setItem(INSTANTANEA_STATS_KEY, JSON.stringify(s));
+  }
+}
+
+export function getInstantaneaStats(): InstantaneaStats {
+  return loadInstantaneaStats();
+}
+
+export function limparInstantaneaStats(): void {
+  saveInstantaneaStats({ venda: 0, premio: 0, comissao: 0 });
+}
 
 function loadGerentes(): Gerente[] {
   if (typeof window === "undefined") return [];
@@ -83,6 +182,7 @@ export function getGerentes(): Gerente[] {
       adicionarSaldo: false,
       status: "ativo",
       socio: "-",
+      contasSocio: "",
       criadoEm: new Date().toLocaleString("pt-BR"),
     };
     saveGerentes([inicial]);
@@ -91,12 +191,15 @@ export function getGerentes(): Gerente[] {
   return g.map((x) => ({ ...x, codigo: (x as { codigo?: string }).codigo ?? "default" }));
 }
 
-/** Verifica se o código da banca corresponde (Lotobrasil e default tratados como a mesma banca). */
+/** Verifica se o código da banca corresponde (Lotobrasil e default tratados como a mesma banca; comparação case-insensitive). */
 function codigoCorresponde(codigoBanca: string, codigoEntidade: string): boolean {
-  const c = codigoEntidade ?? "default";
-  if (c === codigoBanca) return true;
-  if (codigoBanca === CODIGO_CHEFE && c === "default") return true;
-  if (codigoBanca === "default" && c === CODIGO_CHEFE) return true;
+  const b = (codigoBanca ?? "").trim().toLowerCase();
+  const c = (codigoEntidade ?? "default").trim().toLowerCase();
+  if (!b) return false;
+  if (b === c) return true;
+  const chefe = CODIGO_CHEFE.toLowerCase();
+  if (b === chefe && c === "default") return true;
+  if (b === "default" && c === chefe) return true;
   return false;
 }
 
@@ -114,6 +217,7 @@ export function getCambistas(): Cambista[] {
         id: "1",
         gerenteId: "1",
         codigo: "default",
+        tipo: "cambista",
         login: "Alana Santos",
         senha: "123",
         saldo: 1000,
@@ -141,6 +245,7 @@ export function getCambistas(): Cambista[] {
         id: "2",
         gerenteId: "1",
         codigo: "default",
+        tipo: "cambista",
         login: "Carvalho Premiações",
         senha: "123",
         saldo: 5000,
@@ -233,6 +338,33 @@ export function updateCambista(id: string, dados: Partial<Cambista>): void {
   }
 }
 
+/** Atualiza o último acesso do cambista (chamado no login do cliente). */
+export function updateCambistaUltimoAcesso(cambistaId: string): void {
+  updateCambista(cambistaId, { ultimoAcesso: new Date().toISOString() });
+}
+
+/** Verifica e inativa cambistas sem acesso há mais de X dias (usa diasExcluirCambistaInativo da config). */
+export function verificarCambistasInativos(): number {
+  const cfg = loadConfig();
+  const dias = cfg.diasExcluirCambistaInativo ?? 0;
+  if (dias <= 0) return 0;
+  const lista = getCambistas();
+  const limite = new Date();
+  limite.setDate(limite.getDate() - dias);
+  let inativados = 0;
+  for (const c of lista) {
+    if (c.status !== "ativo") continue;
+    const ult = c.ultimoAcesso;
+    if (!ult) continue;
+    const dt = new Date(ult);
+    if (dt < limite) {
+      updateCambista(c.id, { status: "inativo" });
+      inativados++;
+    }
+  }
+  return inativados;
+}
+
 export function deleteCambista(id: string): void {
   const lista = getCambistas().filter((x) => x.id !== id);
   saveCambistas(lista);
@@ -301,12 +433,72 @@ export function deleteExtracao(id: string) {
   saveExtracoes(getExtracoes().filter((e) => e.id !== id));
 }
 
+// Sorteios
+function loadSorteios(): Sorteio[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const data = localStorage.getItem(SORTEIOS_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSorteios(s: Sorteio[]) {
+  if (typeof window !== "undefined") {
+    localStorage.setItem(SORTEIOS_KEY, JSON.stringify(s));
+  }
+}
+
+export function getSorteios(): Sorteio[] {
+  return loadSorteios();
+}
+
+export function addSorteio(s: Omit<Sorteio, "id" | "criadoEm">): Sorteio {
+  const lista = getSorteios();
+  const novo: Sorteio = {
+    ...s,
+    id: String(Date.now()),
+    criadoEm: new Date().toLocaleString("pt-BR"),
+  };
+  lista.push(novo);
+  saveSorteios(lista);
+  return novo;
+}
+
+export function updateSorteio(id: string, dados: Partial<Omit<Sorteio, "id" | "criadoEm">>): void {
+  const lista = getSorteios();
+  const idx = lista.findIndex((x) => x.id === id);
+  if (idx >= 0) {
+    lista[idx] = { ...lista[idx], ...dados };
+    saveSorteios(lista);
+  }
+}
+
+export function deleteSorteio(id: string): boolean {
+  const lista = getSorteios().filter((x) => x.id !== id);
+  if (lista.length === getSorteios().length) return false;
+  saveSorteios(lista);
+  return true;
+}
+
 export function extracaoAceitaApostas(encerra: string): boolean {
   const now = new Date();
   const [h, m] = encerra.split(":").map(Number);
   const encerraDate = new Date(now);
   encerraDate.setHours(h, m, 0, 0);
   return now < encerraDate;
+}
+
+/** Dias da semana: 0=Dom, 1=Seg, ..., 6=Sab */
+const DIA_SEMANA_KEYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"] as const;
+
+/** Verifica se a extração roda no dia da semana atual. Vazio/undefined = todos os dias. */
+export function extracaoRodaHoje(e: Pick<Extracao, "dias">): boolean {
+  const dias = e.dias;
+  if (!dias || dias.length === 0) return true;
+  const hoje = DIA_SEMANA_KEYS[new Date().getDay()];
+  return dias.includes(hoje);
 }
 
 /** Verifica se ainda é possível cancelar o bilhete (extração não encerrou) */
@@ -334,7 +526,45 @@ function loadConfig(): AppConfig {
   try {
     const data = localStorage.getItem(CONFIG_KEY);
     const parsed = data ? JSON.parse(data) : {};
-    return { ...CONFIG_DEFAULT, ...parsed, premioMax: parsed.premioMax === 5 ? 5 : 10 };
+    const base: AppConfig = {
+      ...CONFIG_DEFAULT,
+      ...parsed,
+      premioMax: parsed.premioMax === 5 ? 5 : 10,
+      apostasAtivas:
+        typeof parsed.apostasAtivas === "boolean"
+          ? parsed.apostasAtivas
+          : CONFIG_DEFAULT.apostasAtivas,
+      textoRodapeBilhete:
+        typeof parsed.textoRodapeBilhete === "string" &&
+        parsed.textoRodapeBilhete.trim().length > 0
+          ? parsed.textoRodapeBilhete
+          : CONFIG_DEFAULT.textoRodapeBilhete,
+      regulamento:
+        typeof parsed.regulamento === "string"
+          ? parsed.regulamento
+          : CONFIG_DEFAULT.regulamento,
+      comissoesPadrao:
+        parsed.comissoesPadrao &&
+        typeof parsed.comissoesPadrao === "object" &&
+        typeof (parsed.comissoesPadrao as Record<string, unknown>).comissaoMilhar === "number"
+          ? (parsed.comissoesPadrao as ComissoesPadrao)
+          : CONFIG_DEFAULT.comissoesPadrao,
+      tempoSegundaViaMinutos: typeof parsed.tempoSegundaViaMinutos === "number" && parsed.tempoSegundaViaMinutos >= 0
+        ? parsed.tempoSegundaViaMinutos
+        : CONFIG_DEFAULT.tempoSegundaViaMinutos ?? 60,
+      diasExcluirCambistaInativo: typeof parsed.diasExcluirCambistaInativo === "number" && parsed.diasExcluirCambistaInativo >= 0
+        ? parsed.diasExcluirCambistaInativo
+        : CONFIG_DEFAULT.diasExcluirCambistaInativo ?? 0,
+      baixaAutomatica: typeof parsed.baixaAutomatica === "boolean" ? parsed.baixaAutomatica : CONFIG_DEFAULT.baixaAutomatica ?? false,
+      milharBrindeGlobal: parsed.milharBrindeGlobal && typeof parsed.milharBrindeGlobal === "object" && ["nao", "valor_fixo", "valor_multiplicado"].includes((parsed.milharBrindeGlobal as MilharBrindeGlobal).tipo)
+        ? (parsed.milharBrindeGlobal as MilharBrindeGlobal)
+        : CONFIG_DEFAULT.milharBrindeGlobal,
+      gerentePodeCancelarAposta: typeof parsed.gerentePodeCancelarAposta === "boolean" ? parsed.gerentePodeCancelarAposta : CONFIG_DEFAULT.gerentePodeCancelarAposta ?? true,
+      lucroBancaInstantaneaPercent: typeof parsed.lucroBancaInstantaneaPercent === "number" && parsed.lucroBancaInstantaneaPercent >= 0 && parsed.lucroBancaInstantaneaPercent <= 100
+        ? parsed.lucroBancaInstantaneaPercent
+        : CONFIG_DEFAULT.lucroBancaInstantaneaPercent ?? 30,
+    };
+    return base;
   } catch {
     return CONFIG_DEFAULT;
   }
@@ -357,6 +587,15 @@ export function setConfig(c: Partial<AppConfig>) {
 
 export function getTempoCancelamentoMinutos(): number {
   return loadConfig().tempoCancelamentoMinutos;
+}
+
+/** Verifica se ainda está no prazo para imprimir segunda via (minutos após a aposta). tempoMinutos 0 = sempre permitido. */
+export function podeImprimirSegundaVia(bilheteDataStr: string, tempoMinutos: number): boolean {
+  if (tempoMinutos <= 0) return true;
+  const dt = parseDataBrasil(bilheteDataStr);
+  if (!dt) return false;
+  const diff = (Date.now() - dt.getTime()) / (60 * 1000);
+  return diff <= tempoMinutos;
 }
 
 export function getPremioMax(): 5 | 10 {
@@ -489,10 +728,27 @@ export async function addBilhete(b: Omit<Bilhete, "id" | "codigo">): Promise<Bil
 
 /** Mapeia modalidade (CotacaoKey) para a base usada na comissão (grupo, dezena, centena, milhar). */
 function baseComissao(mod: string): "grupo" | "dezena" | "centena" | "milhar" {
-  if (mod.startsWith("duque_grupo") || mod.startsWith("terno_grupo") || mod.startsWith("passe")) return "grupo";
-  if (mod.startsWith("duque_dezena") || mod.startsWith("terno_dezena")) return "dezena";
-  if (mod.includes("centena") && mod !== "milhar_e_centena" && mod !== "mc_invertida") return "centena";
+  if (mod === "grupo" || mod.startsWith("duque_grupo") || mod.startsWith("terno_grupo") || mod.startsWith("passe")) return "grupo";
+  if (mod === "dezena" || mod.startsWith("duque_dezena") || mod.startsWith("terno_dezena")) return "dezena";
+  if (mod === "centena" || (mod.includes("centena") && mod !== "milhar_e_centena" && mod !== "mc_invertida")) return "centena";
   return "milhar";
+}
+
+/** Calcula o prêmio potencial máximo do bilhete (valor × cotação ÷ divisor por item) */
+export function calcularPremioPotencialBilhete(bilhete: Bilhete, cambista: Cambista): number {
+  let total = 0;
+  for (const item of bilhete.itens) {
+    const divisor = getPremioDivisor(item.premio);
+    if (item.modalidade === "milhar_e_centena") {
+      const cotM = getCotacaoEfetiva(cambista, "milhar");
+      const cotC = getCotacaoEfetiva(cambista, "centena");
+      total += (item.valor * (cotM + cotC) / 2) / divisor;
+    } else {
+      const cot = getCotacaoEfetiva(cambista, item.modalidade as CotacaoKey);
+      total += (item.valor * cot) / divisor;
+    }
+  }
+  return total;
 }
 
 /** Calcula a comissão do bilhete com base nas taxas do cambista */
@@ -587,6 +843,22 @@ export function addLancamento(l: Omit<Lancamento, "id">): Lancamento {
   return novo;
 }
 
+/** Remove um lançamento e reverte o efeito no caixa do cambista. */
+export function deleteLancamento(id: string): boolean {
+  const lista = getLancamentos();
+  const idx = lista.findIndex((l) => l.id === id);
+  if (idx < 0) return false;
+  const l = lista[idx];
+  const cam = getCambistas().find((c) => c.id === l.cambistaId);
+  if (cam) {
+    const delta = l.tipo === "adiantar" ? -l.valor : l.valor;
+    updateCambista(l.cambistaId, { lancamentos: cam.lancamentos + delta });
+  }
+  lista.splice(idx, 1);
+  saveLancamentos(lista);
+  return true;
+}
+
 // Resultados
 function loadResultados(): Resultado[] {
   if (typeof window === "undefined") return [];
@@ -614,7 +886,9 @@ export async function addResultado(r: Omit<Resultado, "id">): Promise<Resultado>
   const novo: Resultado = { ...r, id: String(Date.now()) };
   lista.push(novo);
   saveResultados(lista);
-  atualizarBilhetesComResultado(novo);
+  if (loadConfig().baixaAutomatica !== false) {
+    atualizarBilhetesComResultado(novo);
+  }
   if (useSupabase) {
     await pushToSupabase("resultados", getResultados());
     await pushToSupabase("bilhetes", getBilhetes());
@@ -644,6 +918,20 @@ export function getResultadoByExtracaoData(extracaoId: string, dataBilhete: stri
 export function reconferirBilhetesComResultados(): void {
   for (const r of getResultados()) {
     atualizarBilhetesComResultado(r);
+  }
+}
+
+/** Recalcula comissão de cada cambista a partir dos bilhetes (corrige valores acumulados incorretos). */
+export function recalculateComissaoFromBilhetes(): void {
+  const cambistas = getCambistas();
+  const bilhetes = getBilhetes();
+  for (const cam of cambistas) {
+    const comissaoCorreta = bilhetes
+      .filter((b) => b.cambistaId === cam.id && b.situacao !== "cancelado")
+      .reduce((acc, b) => acc + calcularComissaoBilhete(b, cam), 0);
+    if (Math.abs((cam.comissao ?? 0) - comissaoCorreta) > 0.01) {
+      updateCambista(cam.id, { comissao: comissaoCorreta });
+    }
   }
 }
 

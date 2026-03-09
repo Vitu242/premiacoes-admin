@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getCambistas, calcularTotalCaixa, getJogosEmAberto } from "@/lib/store";
+import { useVisibilityRefresh } from "@/lib/use-config-refresh";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -17,6 +18,22 @@ export default function ClienteCaixaPage() {
     comissao: number;
     lancamentos: number;
   } | null>(null);
+
+  const atualizarCaixa = () => {
+    const auth = localStorage.getItem("premiacoes_cliente");
+    if (!auth) return;
+    const { cambistaId: cid } = JSON.parse(auth);
+    setCambistaId(cid);
+    const cam = getCambistas().find((c) => c.id === cid);
+    if (cam) {
+      setCambista({
+        entrada: cam.entrada,
+        saidas: cam.saidas,
+        comissao: cam.comissao,
+        lancamentos: cam.lancamentos,
+      });
+    }
+  };
 
   useEffect(() => {
     const auth = localStorage.getItem("premiacoes_cliente");
@@ -36,6 +53,8 @@ export default function ClienteCaixaPage() {
       });
     }
   }, [router]);
+
+  useVisibilityRefresh(atualizarCaixa);
 
   const jogosAberto = cambistaId ? getJogosEmAberto(cambistaId) : 0;
 

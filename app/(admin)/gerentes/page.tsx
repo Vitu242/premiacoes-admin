@@ -11,6 +11,7 @@ import {
   getCambistas,
 } from "@/lib/store";
 import { getAdminCodigo } from "@/lib/auth";
+import { addLog } from "@/lib/auditoria";
 import type { Gerente } from "@/lib/types";
 
 function gerenteInicial(codigo: string): Omit<Gerente, "id" | "criadoEm"> {
@@ -28,6 +29,7 @@ function gerenteInicial(codigo: string): Omit<Gerente, "id" | "criadoEm"> {
     adicionarSaldo: false,
     status: "ativo",
     socio: "-",
+    contasSocio: "",
   };
 }
 
@@ -64,6 +66,7 @@ export default function GerentesPage() {
       adicionarSaldo: g.adicionarSaldo,
       status: g.status,
       socio: g.socio,
+      contasSocio: g.contasSocio ?? "",
     });
   };
 
@@ -80,12 +83,14 @@ export default function GerentesPage() {
         return;
       }
       addGerente(form);
+      addLog("Criou gerente", form.login);
     } else if (editando) {
       if (!form.login.trim()) {
         alert("Preencha o login.");
         return;
       }
       updateGerente(editando.id, form);
+      addLog("Atualizou gerente", form.login);
     }
     setGerentesState(getGerentesPorCodigo(codigo ?? ""));
     setEditando(null);
@@ -94,7 +99,9 @@ export default function GerentesPage() {
 
   const apagar = (id: string) => {
     if (confirm("Apagar este gerente? Os cambistas vinculados serão removidos.")) {
+      const g = gerentes.find((x) => x.id === id);
       deleteGerente(id);
+      addLog("Apagou gerente", g?.login ?? id);
       setGerentesState(getGerentesPorCodigo(codigo ?? ""));
       setEditando(null);
     }
@@ -141,6 +148,9 @@ export default function GerentesPage() {
                 Sócio
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">
+                C/S (Contas/Sócio)
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">
                 Status
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">
@@ -155,6 +165,7 @@ export default function GerentesPage() {
                 <td className="px-4 py-3 text-sm text-gray-600">{g.comissaoBruto}%</td>
                 <td className="px-4 py-3 text-sm text-gray-600">{g.comissaoLucro}%</td>
                 <td className="px-4 py-3 text-sm text-gray-600">{g.socio}</td>
+                <td className="px-4 py-3 text-sm text-gray-600">{g.contasSocio || "-"}</td>
                 <td className="px-4 py-3">
                   <span className="rounded-full bg-green-100 px-2 py-1 text-xs text-green-700">
                     {g.status === "ativo" ? "Ativo" : "Inativo"}
@@ -263,6 +274,18 @@ export default function GerentesPage() {
                   value={form.descricao}
                   onChange={(e) => setForm({ ...form, descricao: e.target.value })}
                   rows={2}
+                  className="mt-1 w-full rounded border px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">C/S (Contas/Sócio):</label>
+                <input
+                  type="text"
+                  value={form.contasSocio ?? ""}
+                  onChange={(e) =>
+                    setForm({ ...form, contasSocio: e.target.value })
+                  }
+                  placeholder="Ex.: código ou indicador"
                   className="mt-1 w-full rounded border px-3 py-2"
                 />
               </div>

@@ -6,16 +6,19 @@ import { useRouter } from "next/navigation";
 import {
   getExtracoes,
   extracaoAceitaApostas,
+  extracaoRodaHoje,
   getCambistas,
   addBilhete,
   podeRealizarVenda,
   getSaldoDisponivel,
   getCotacaoEfetiva,
   getPremioMax,
+  getConfig,
 } from "@/lib/store";
 import type { Extracao, ModalidadeBilhete, ItemBilhete } from "@/lib/types";
-import { COTACOES_LABELS } from "@/lib/cotacoes";
-import type { CotacaoKey } from "@/lib/cotacoes";
+import { COTACOES_LABELS, modalidadePodeApostar } from "@/lib/cotacoes";
+import type { CotacaoKey, StatusModalidade } from "@/lib/cotacoes";
+import { useConfigRefresh } from "@/lib/use-config-refresh";
 
 type Step = "extracao" | "modalidade" | "variante" | "numeros" | "premio" | "milharBrinde" | "valor" | "confirmar";
 
@@ -68,9 +71,13 @@ export default function ClienteVenderPage() {
   const [valor, setValor] = useState("");
   const [valorModo, setValorModo] = useState<"dividir" | "multiplicar">("multiplicar");
   const [erro, setErro] = useState("");
+  const [apostasAtivas, setApostasAtivas] = useState(true);
   const [sucesso, setSucesso] = useState<{ codigo: string } | null>(null);
+  const [modalidadesCfg, setModalidadesCfg] = useState<
+    Record<string, { minValor?: number; maxValor?: number; ativa?: boolean; status?: StatusModalidade }> | null
+  >(null);
 
-  const extracoes = getExtracoes().filter((e) => e.ativa && extracaoAceitaApostas(e.encerra));
+  const extracoes = getExtracoes().filter((e) => e.ativa && extracaoAceitaApostas(e.encerra) && extracaoRodaHoje(e));
   const cambista = cambistaId ? getCambistas().find((c) => c.id === cambistaId) : null;
   const premioMax = getPremioMax();
 
@@ -82,7 +89,18 @@ export default function ClienteVenderPage() {
     }
     const { cambistaId: cid } = JSON.parse(auth);
     setCambistaId(cid);
+    const cfg = getConfig() as any;
+    setApostasAtivas(cfg.apostasAtivas ?? true);
+    setModalidadesCfg(cfg.modalidades ?? null);
   }, [router]);
+
+  useConfigRefresh((cfg: any) => {
+    setApostasAtivas(cfg.apostasAtivas ?? true);
+    setModalidadesCfg(cfg.modalidades ?? null);
+  });
+
+  const cfg = getConfig() as { milharBrindeGlobal?: { tipo?: string } };
+  const mostraMilharBrinde = (cambista?.milharBrinde === "sim") && (cfg.milharBrindeGlobal?.tipo !== "nao");
 
   const indexComVariante = (): number | null => {
     if (!modalidade) return null;
@@ -102,7 +120,7 @@ export default function ClienteVenderPage() {
     else if (step === "milharBrinde") setStep("premio");
     else if (step === "valor") {
       if (modalidade && getPremioFixoFromKey(modalidade)) setStep("numeros");
-      else setStep(cambista?.milharBrinde === "sim" ? "milharBrinde" : "premio");
+      else setStep(mostraMilharBrinde ? "milharBrinde" : "premio");
     } else setStep("valor");
   };
 
@@ -190,7 +208,7 @@ export default function ClienteVenderPage() {
       }
     }
     const premioFixo = getPremioFixoFromKey(modalidade);
-    if (premioFixo) { setPremio(premioFixo); setStep(cambista?.milharBrinde === "sim" ? "milharBrinde" : "valor"); setValor(""); }
+    if (premioFixo) { setPremio(premioFixo); setStep(mostraMilharBrinde ? "milharBrinde" : "valor"); setValor(""); }
     else { setStep("premio"); setPremio(""); }
     setErro("");
   };
@@ -251,7 +269,7 @@ export default function ClienteVenderPage() {
       setErro("Digite o prêmio no formato 1/5 (ex: 1º ao 5º).");
       return;
     }
-    if (cambista?.milharBrinde === "sim") {
+    if (mostraMilharBrinde) {
       setStep("milharBrinde");
       setMilharBrinde("");
     } else {
@@ -300,6 +318,27 @@ export default function ClienteVenderPage() {
       setErro("Informe um valor válido.");
       return;
     }
+     if (!modalidade) {
+       setErro("Selecione uma modalidade.");
+       return;
+     }
+     const cfg = modalidadesCfg?.[modalidade];
+     if (cfg) {
+       if (!modalidadePodeApostar(cfg)) {
+         setErro("Esta modalidade está bloqueada pela banca.");
+         return;
+       }
+       const min = cfg.minValor ?? 0;
+       const max = cfg.maxValor ?? 0;
+       if (min > 0 && valorTotal < min) {
+         setErro(`Valor mínimo para ${COTACOES_LABELS[modalidade] ?? modalidade} é ${min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`);
+         return;
+       }
+       if (max > 0 && valorTotal > max) {
+         setErro(`Valor máximo para ${COTACOES_LABELS[modalidade] ?? modalidade} é ${max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`);
+         return;
+       }
+     }
     setStep("confirmar");
     setErro("");
   };
@@ -307,6 +346,24 @@ export default function ClienteVenderPage() {
   const finalizarVenda = async () => {
     if (!extracao || !modalidade || !cambistaId || !cambista) return;
     if (isNaN(valorDigitado) || valorDigitado <= 0) return;
+
+    const cfg = modalidadesCfg?.[modalidade];
+    if (cfg) {
+      if (!modalidadePodeApostar(cfg)) {
+        setErro("Esta modalidade está bloqueada pela banca.");
+        return;
+      }
+      const min = cfg.minValor ?? 0;
+      const max = cfg.maxValor ?? 0;
+      if (min > 0 && valorTotal < min) {
+        setErro(`Valor mínimo para ${COTACOES_LABELS[modalidade] ?? modalidade} é ${min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`);
+        return;
+      }
+      if (max > 0 && valorTotal > max) {
+        setErro(`Valor máximo para ${COTACOES_LABELS[modalidade] ?? modalidade} é ${max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`);
+        return;
+      }
+    }
 
     const check = podeRealizarVenda(cambistaId, valorTotal);
     if (!check.ok) {
@@ -349,6 +406,22 @@ export default function ClienteVenderPage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-white">
         <p className="text-gray-500">Carregando...</p>
+      </div>
+    );
+  }
+
+  if (!apostasAtivas) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-white px-4">
+        <div className="max-w-md rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
+          <h1 className="mb-2 text-lg font-bold text-amber-800">
+            Apostas temporariamente desativadas
+          </h1>
+          <p className="text-sm text-amber-700">
+            No momento não é possível realizar novas apostas. Entre em contato
+            com o administrador da banca para mais informações.
+          </p>
+        </div>
       </div>
     );
   }
@@ -463,42 +536,51 @@ export default function ClienteVenderPage() {
         </div>
       )}
 
-      {/* Step: Modalidade (12 opções como na imagem) */}
+      {/* Step: Modalidade (12 opções — oculta as desativadas no admin) */}
       {step === "modalidade" && extracao && (
         <div>
           <p className="mb-2 text-sm text-gray-500">{extracao.nome}</p>
           <p className="mb-4 text-gray-600">Escolha a modalidade:</p>
           <div className="flex flex-col gap-3">
-            {MODALIDADES_TELA.map((m, index) => (
-              <button
-                key={m.label}
-                type="button"
-                onClick={() => m.key ? escolherModalidadeKey(m.key) : escolherModalidadeComVariante(index)}
-                className="w-full rounded-xl bg-sky-100 px-4 py-4 text-left font-bold text-gray-900 hover:bg-sky-200"
-              >
-                {m.label}
-              </button>
-            ))}
+            {MODALIDADES_TELA.filter((m) => {
+              if (m.key) return modalidadePodeApostar(modalidadesCfg?.[m.key]);
+              if (m.variantes) return m.variantes.some((v) => modalidadePodeApostar(modalidadesCfg?.[v.key]));
+              return true;
+            }).map((m) => {
+              const index = MODALIDADES_TELA.indexOf(m);
+              return (
+                <button
+                  key={m.label}
+                  type="button"
+                  onClick={() => m.key ? escolherModalidadeKey(m.key) : escolherModalidadeComVariante(index)}
+                  className="w-full rounded-xl bg-sky-100 px-4 py-4 text-left font-bold text-gray-900 hover:bg-sky-200"
+                >
+                  {m.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* Step: Variante (1/2, 1/5, 1/3, 1/10 para Duque/Terno) */}
+      {/* Step: Variante (1/2, 1/5, 1/3, 1/10 — oculta as desativadas no admin) */}
       {step === "variante" && modalidadeGroupIndex !== null && (
         <div>
           <p className="mb-2 text-sm text-gray-500">{extracao?.nome} → {MODALIDADES_TELA[modalidadeGroupIndex]?.label}</p>
           <p className="mb-4 text-gray-600">Escolha o prêmio:</p>
           <div className="flex flex-col gap-3">
-            {MODALIDADES_TELA[modalidadeGroupIndex]?.variantes?.map((v) => (
-              <button
-                key={v.key}
-                type="button"
-                onClick={() => escolherModalidadeKey(v.key)}
-                className="w-full rounded-xl bg-sky-100 px-4 py-4 text-left font-bold text-gray-900 hover:bg-sky-200"
-              >
-                {v.label}
-              </button>
-            ))}
+            {MODALIDADES_TELA[modalidadeGroupIndex]?.variantes
+              ?.filter((v) => modalidadePodeApostar(modalidadesCfg?.[v.key]))
+              .map((v) => (
+                <button
+                  key={v.key}
+                  type="button"
+                  onClick={() => escolherModalidadeKey(v.key)}
+                  className="w-full rounded-xl bg-sky-100 px-4 py-4 text-left font-bold text-gray-900 hover:bg-sky-200"
+                >
+                  {v.label}
+                </button>
+              ))}
           </div>
         </div>
       )}
@@ -573,7 +655,7 @@ export default function ClienteVenderPage() {
       )}
 
       {/* Step: Milhar Brinde (opcional) - só se cambista habilitou */}
-      {step === "milharBrinde" && cambista?.milharBrinde === "sim" && (
+      {step === "milharBrinde" && mostraMilharBrinde && (
         <div>
           <p className="mb-2 text-sm text-gray-500">
             {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros}

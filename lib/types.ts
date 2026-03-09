@@ -15,6 +15,8 @@ export interface Gerente {
   adicionarSaldo: boolean;
   status: "ativo" | "inativo";
   socio: string;
+  /** C/S = Contas/Sócio. Ex.: indicador de contas ou código. */
+  contasSocio?: string;
   criadoEm: string;
 }
 
@@ -22,6 +24,8 @@ export interface Cambista {
   id: string;
   gerenteId: string;
   codigo: string; // Mesmo código da banca do gerente – cliente entra com este código
+  /** Tipo: Cambista (vendedor) ou Cliente. Padrão: "cambista". */
+  tipo?: "cambista" | "cliente";
   login: string;
   senha: string;
   saldo: number;
@@ -47,16 +51,37 @@ export interface Cambista {
   comissao: number;
   lancamentos: number;
   ultimaPrestacao: string | null;
+  /** Data/hora do último login no app cliente (ISO string) - para controle de inatividade */
+  ultimoAcesso?: string | null;
 }
 
 /** Todas as modalidades de aposta (inclui as 4 base e as demais do jogo do bicho). */
 export type ModalidadeBilhete = CotacaoKey;
+
+/** Sorteio cadastrado no painel (eventos/promos). */
+export interface Sorteio {
+  id: string;
+  nome: string;
+  /** Data do sorteio (dd/mm/aaaa ou ISO). */
+  data: string;
+  /** Regras, prêmios ou observações. */
+  descricao?: string;
+  ativo: boolean;
+  criadoEm: string;
+}
+
+/** Dias da semana em que a extração ocorre. Vazio = todos os dias. */
+export type DiaSemana = "Dom" | "Seg" | "Ter" | "Qua" | "Qui" | "Sex" | "Sab";
 
 export interface Extracao {
   id: string;
   nome: string;
   encerra: string; // HH:mm
   ativa: boolean;
+  /** Tipo de loteria (ex: Tradicional, Federal). Opcional. */
+  tipo?: string;
+  /** Dias da semana em que ocorre. Vazio ou omitido = todos os dias. */
+  dias?: DiaSemana[];
 }
 
 export interface ItemBilhete {

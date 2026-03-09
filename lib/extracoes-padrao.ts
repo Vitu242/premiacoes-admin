@@ -1,6 +1,6 @@
 "use client";
 
-import type { Extracao } from "./types";
+import type { Extracao, DiaSemana } from "./types";
 
 /** Lista completa de loterias/extrações. Encerra é inferido do nome (ex: "NACIONAL 02:00" → 02:00). */
 const NOMES = [
@@ -66,11 +66,15 @@ function extrairEncerra(nome: string): string {
   return match ? `${match[1].padStart(2, "0")}:${match[2]}` : "23:59";
 }
 
+const TODOS_DIAS: DiaSemana[] = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
+
 export function getExtracoesPadrao(): Extracao[] {
   return NOMES.map((nome, i) => ({
     id: String(i + 1),
     nome,
     encerra: extrairEncerra(nome),
     ativa: true,
+    tipo: "Tradicional",
+    dias: TODOS_DIAS,
   }));
 }

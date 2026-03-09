@@ -18,6 +18,7 @@ function toDbCambista(c: Cambista) {
     id: c.id,
     gerente_id: c.gerenteId,
     codigo: c.codigo ?? "default",
+    tipo: c.tipo ?? "cambista",
     login: c.login,
     senha: c.senha,
     saldo: c.saldo,
@@ -41,6 +42,7 @@ function toDbCambista(c: Cambista) {
     lancamentos: c.lancamentos,
     ultima_prestacao: c.ultimaPrestacao,
     cotacoes: c.cotacoes ?? null,
+    ultimo_acesso: (c as { ultimoAcesso?: string | null }).ultimoAcesso ?? null,
   };
 }
 
@@ -86,12 +88,14 @@ export async function initFromSupabase(): Promise<boolean> {
       adicionarSaldo: Boolean(r.adicionar_saldo),
       status: r.status ?? "ativo",
       socio: r.socio ?? "",
+      contasSocio: r.contas_socio ? String(r.contas_socio) : undefined,
       criadoEm: r.criado_em ?? "",
     });
     const mapCambista = (r: Record<string, unknown>) => ({
       id: String(r.id ?? ""),
       gerenteId: r.gerente_id ?? "",
       codigo: r.codigo ?? "default",
+      tipo: r.tipo === "cliente" ? "cliente" : "cambista",
       login: r.login ?? "",
       senha: r.senha ?? "",
       saldo: Number(r.saldo ?? 0),
@@ -115,6 +119,7 @@ export async function initFromSupabase(): Promise<boolean> {
       lancamentos: Number(r.lancamentos ?? 0),
       ultimaPrestacao: r.ultima_prestacao ?? null,
       cotacoes: r.cotacoes != null && typeof r.cotacoes === "object" ? r.cotacoes : undefined,
+      ultimoAcesso: r.ultimo_acesso ?? undefined,
     });
 
     if (gerentesRes.data?.length) {
@@ -155,6 +160,8 @@ export async function initFromSupabase(): Promise<boolean> {
       nome: r.nome ?? "",
       encerra: r.encerra ?? "",
       ativa: Boolean(r.ativa ?? true),
+      tipo: typeof r.tipo === "string" ? r.tipo : undefined,
+      dias: Array.isArray(r.dias) ? r.dias : undefined,
     })));
 
     if (bilhetesRes.data?.length) write(KEYS.bilhetes, bilhetesRes.data.map((r: Record<string, unknown>) => ({
@@ -234,11 +241,11 @@ export async function pushToSupabase(
       }
       if (table === "gerentes") {
         const g = r as unknown as Gerente;
-        return { id: g.id, codigo: g.codigo ?? "default", login: g.login, senha: g.senha, tipo: g.tipo, comissao_bruto: g.comissaoBruto, comissao_lucro: g.comissaoLucro, endereco: g.endereco, telefone: g.telefone, descricao: g.descricao, criar_cambista: g.criarCambista, adicionar_saldo: g.adicionarSaldo, status: g.status, socio: g.socio, criado_em: g.criadoEm };
+        return { id: g.id, codigo: g.codigo ?? "default", login: g.login, senha: g.senha, tipo: g.tipo, comissao_bruto: g.comissaoBruto, comissao_lucro: g.comissaoLucro, endereco: g.endereco, telefone: g.telefone, descricao: g.descricao, criar_cambista: g.criarCambista, adicionar_saldo: g.adicionarSaldo, status: g.status, socio: g.socio, contas_socio: g.contasSocio ?? null, criado_em: g.criadoEm };
       }
       if (table === "extracoes") {
         const e = r as unknown as Extracao;
-        return { id: e.id, nome: e.nome, encerra: e.encerra, ativa: e.ativa };
+        return { id: e.id, nome: e.nome, encerra: e.encerra, ativa: e.ativa, tipo: e.tipo ?? null, dias: e.dias ?? null };
       }
       if (table === "lancamentos") {
         const l = r as unknown as Lancamento;

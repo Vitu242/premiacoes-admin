@@ -12,12 +12,16 @@ import {
   podeCancelarBilhete,
   cancelarBilhete,
   calcularComissaoBilhete,
+  calcularPremioPotencialBilhete,
   getCotacaoEfetiva,
+  getConfig,
+  podeImprimirSegundaVia,
 } from "@/lib/store";
 import { conferirBilhete } from "@/lib/conferencia";
 import type { Bilhete, Extracao } from "@/lib/types";
 
 import { COTACOES_LABELS } from "@/lib/cotacoes";
+import { useConfigRefresh, useVisibilityRefresh } from "@/lib/use-config-refresh";
 
 const MODALIDADES: Record<string, string> = {
   grupo: "GRUPO",
@@ -44,10 +48,13 @@ export default function ClienteBilhetePage() {
   const [filtroCodigo, setFiltroCodigo] = useState("");
   const [bilhetes, setBilhetes] = useState<Bilhete[]>([]);
   const [detalhe, setDetalhe] = useState<Bilhete | null>(null);
+  const [textoBilhete, setTextoBilhete] = useState("");
 
   const cambistas = getCambistas();
   const extracoes = getExtracoes();
   const tempoCancel = getTempoCancelamentoMinutos();
+  const cfg = getConfig();
+  const tempoSegundaVia = cfg.tempoSegundaViaMinutos ?? 60;
 
   useEffect(() => {
     const auth = localStorage.getItem("premiacoes_cliente");
@@ -58,7 +65,17 @@ export default function ClienteBilhetePage() {
     const { cambistaId: cid, codigo: c } = JSON.parse(auth);
     setCambistaId(cid);
     setCodigoBanca(c || "");
+    const cfg = getConfig();
+    setTextoBilhete(cfg.textoRodapeBilhete ?? "");
   }, [router]);
+
+  useConfigRefresh((c) => {
+    setTextoBilhete(c.textoRodapeBilhete ?? "");
+  });
+
+  useVisibilityRefresh(() => {
+    if (cambistaId) aplicarFiltros();
+  });
 
   const aplicarFiltros = () => {
     if (!cambistaId) return;
@@ -192,7 +209,7 @@ export default function ClienteBilhetePage() {
                     Data: {formatarData(b.data)}
                   </p>
                   <p className="text-sm text-gray-600">
-                    Valor: {formatarMoeda(b.total)} | Comissão: {formatarMoeda(getComissao(b))}
+                    Valor: {formatarMoeda(b.total)} | Comissão: {formatarMoeda(getComissao(b))} | Prêmio: {formatarMoeda(cambista ? calcularPremioPotencialBilhete(b, cambista) : 0)}
                   </p>
                 </div>
                 <span
@@ -245,6 +262,7 @@ export default function ClienteBilhetePage() {
                     </div>
                   ))}
                   <p className="mt-3 font-bold text-gray-800">TOTAL: {formatarMoeda(b.total)}</p>
+                  <p className="text-sm text-gray-600">Prêmio potencial: {formatarMoeda(cambista ? calcularPremioPotencialBilhete(b, cambista) : 0)}</p>
 
                   {/* Calculadora: resultado e valor ganho */}
                   <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
@@ -267,15 +285,16 @@ export default function ClienteBilhetePage() {
                     )}
                   </div>
                   <p className="mt-2 text-xs text-blue-600">
-                    Confira seu bilhete, a banca não se responsabiliza por qualquer erro do cambista.
+                    {textoBilhete ||
+                      "Confira seu bilhete, a banca não se responsabiliza por qualquer erro do cambista."}
                   </p>
                   <p className="mt-1 text-xs text-gray-500">
                     {bancaNome} agradece a sua preferência, boa sorte e ótimos resultados!
                   </p>
-                  <div className="mt-4 flex gap-2">
+                  <div className="mt-4 flex flex-wrap gap-2">
                     <Link
                       href="/cliente"
-                      className="flex-1 rounded bg-blue-100 py-2 text-center text-sm font-medium text-blue-700"
+                      className="flex-1 min-w-[80px] rounded bg-blue-100 py-2 text-center text-sm font-medium text-blue-700"
                     >
                       Início
                     </Link>
@@ -291,10 +310,22 @@ export default function ClienteBilhetePage() {
                           alert("Código copiado!");
                         }
                       }}
-                      className="flex-1 rounded bg-blue-600 py-2 text-sm font-medium text-white"
+                      className="flex-1 min-w-[80px] rounded bg-blue-600 py-2 text-sm font-medium text-white"
                     >
                       Enviar
                     </button>
+                    {podeImprimirSegundaVia(b.data, tempoSegundaVia) ? (
+                      <button
+                        onClick={() => window.print()}
+                        className="flex-1 min-w-[80px] rounded bg-gray-700 py-2 text-sm font-medium text-white"
+                      >
+                        Imprimir
+                      </button>
+                    ) : (
+                      <span className="flex-1 min-w-[80px] rounded bg-gray-200 py-2 text-center text-xs text-gray-500">
+                        2ª via: prazo de {tempoSegundaVia} min expirado
+                      </span>
+                    )}
                   </div>
                 </div>
                 );

@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS gerentes (
   adicionar_saldo BOOLEAN DEFAULT false,
   status TEXT DEFAULT 'ativo',
   socio TEXT,
+  contas_socio TEXT,
   criado_em TEXT,
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -26,6 +27,7 @@ CREATE TABLE IF NOT EXISTS cambistas (
   id TEXT PRIMARY KEY,
   gerente_id TEXT REFERENCES gerentes(id),
   codigo TEXT DEFAULT 'default',
+  tipo TEXT DEFAULT 'cambista' CHECK (tipo IN ('cambista', 'cliente')),
   login TEXT NOT NULL,
   senha TEXT NOT NULL,
   saldo NUMERIC DEFAULT 0,
@@ -98,9 +100,9 @@ CREATE TABLE IF NOT EXISTS resultados (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Config
+-- Config (id para compatibilidade com sync; use "default" como único registro)
 CREATE TABLE IF NOT EXISTS config (
-  key TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY DEFAULT 'default',
   value JSONB,
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -138,3 +140,9 @@ CREATE POLICY "Allow all admin_credenciais" ON admin_credenciais FOR ALL USING (
 -- ALTER TABLE cambistas ADD COLUMN IF NOT EXISTS codigo TEXT DEFAULT 'default';
 -- ALTER TABLE cambistas ADD COLUMN IF NOT EXISTS cotacoes JSONB;
 -- ALTER TABLE resultados ADD COLUMN IF NOT EXISTS premios JSONB;
+-- ALTER TABLE cambistas ADD COLUMN IF NOT EXISTS ultimo_acesso TIMESTAMPTZ;
+-- ALTER TABLE cambistas ADD COLUMN IF NOT EXISTS tipo TEXT DEFAULT 'cambista';
+-- ALTER TABLE gerentes ADD COLUMN IF NOT EXISTS contas_socio TEXT;
+
+-- Se a tabela config foi criada com coluna key, migre:
+-- ALTER TABLE config RENAME COLUMN key TO id;

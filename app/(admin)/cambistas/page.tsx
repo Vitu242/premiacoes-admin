@@ -4,10 +4,12 @@ import { useState, useEffect, useMemo } from "react";
 import {
   getCambistasPorCodigo,
   getGerentesPorCodigo,
+  getConfig,
   addCambista,
   updateCambista,
   deleteCambista,
 } from "@/lib/store";
+import { addLog } from "@/lib/auditoria";
 import { getAdminCodigo } from "@/lib/auth";
 import type { Cambista } from "@/lib/types";
 
@@ -16,16 +18,23 @@ function formatarMoeda(v: number) {
 }
 
 function cambistaInicial(gerenteId: string, codigo: string): Omit<Cambista, "id"> {
-  return {
-    gerenteId,
-    codigo,
-    login: "",
-    senha: "",
-    saldo: 0,
+  const padrao = getConfig().comissoesPadrao ?? {
     comissaoMilhar: 20,
     comissaoCentena: 20,
     comissaoDezena: 17,
     comissaoGrupo: 17,
+  };
+  return {
+    gerenteId,
+    codigo,
+    tipo: "cambista" as const,
+    login: "",
+    senha: "",
+    saldo: 0,
+    comissaoMilhar: padrao.comissaoMilhar,
+    comissaoCentena: padrao.comissaoCentena,
+    comissaoDezena: padrao.comissaoDezena,
+    comissaoGrupo: padrao.comissaoGrupo,
     cotacaoM: 6000,
     cotacaoC: 800,
     cotacaoD: 80,
@@ -50,6 +59,8 @@ export default function CambistasPage() {
   const gerentes = useMemo(() => getGerentesPorCodigo(codigo ?? ""), [codigo]);
   const [filtroNome, setFiltroNome] = useState("");
   const [filtroGerente, setFiltroGerente] = useState("todos");
+  const [filtroRisco, setFiltroRisco] = useState("todos");
+  const [filtroStatus, setFiltroStatus] = useState<"todos" | "ativo" | "inativo">("todos");
   const [editando, setEditando] = useState<Cambista | null>(null);
   const [novo, setNovo] = useState(false);
   const [form, setForm] = useState(cambistaInicial(gerentes[0]?.id ?? "", codigo ?? "default"));
@@ -60,15 +71,21 @@ export default function CambistasPage() {
 
   const filtrar = cambistas.filter((c) => {
     const okNome = c.login.toLowerCase().includes(filtroNome.toLowerCase());
-    const okGerente =
-      filtroGerente === "todos" || c.gerenteId === filtroGerente;
-    return okNome && okGerente;
+    const okGerente = filtroGerente === "todos" || c.gerenteId === filtroGerente;
+    const riscoNorm = (c.risco ?? "").toUpperCase().replace("É", "E");
+    const filtroNorm = filtroRisco.toUpperCase().replace("É", "E");
+    const okRisco = filtroRisco === "todos" || riscoNorm === filtroNorm;
+    const okStatus = filtroStatus === "todos" || c.status === filtroStatus;
+    return okNome && okGerente && okRisco && okStatus;
   });
 
   const abrirEditar = (c: Cambista) => {
     setEditando(c);
     setNovo(false);
-    setForm({ ...c });
+    const tipoVal = c.tipo === "cliente" ? "cliente" : "cambista";
+    const riscoNorm = (c.risco ?? "").toUpperCase();
+    const riscoVal = riscoNorm === "MÉDIO" ? "MEDIO" : riscoNorm || "RUIM";
+    setForm({ ...c, tipo: tipoVal, risco: ["BOM", "MEDIO", "RUIM"].includes(riscoVal) ? riscoVal : c.risco ?? "RUIM" });
   };
 
   const abrirNovo = () => {
@@ -81,8 +98,10 @@ export default function CambistasPage() {
     if (novo) {
       const gerenteCodigo = gerentes.find((g) => g.id === form.gerenteId)?.codigo ?? codigo ?? "default";
       addCambista({ ...form, codigo: gerenteCodigo });
+      addLog("Criou cambista", form.login);
     } else if (editando) {
       updateCambista(editando.id, form);
+      addLog("Atualizou cambista", form.login);
     }
     setCambistasState(getCambistasPorCodigo(codigo ?? ""));
     setEditando(null);
@@ -91,7 +110,9 @@ export default function CambistasPage() {
 
   const apagar = (id: string) => {
     if (confirm("Apagar este cambista?")) {
+      const c = cambistas.find((x) => x.id === id);
       deleteCambista(id);
+      addLog("Apagou cambista", c?.login ?? id);
       setCambistasState(getCambistasPorCodigo(codigo ?? ""));
       setEditando(null);
     }
@@ -124,6 +145,25 @@ export default function CambistasPage() {
           onChange={(e) => setFiltroNome(e.target.value)}
           className="w-full rounded border border-gray-300 px-4 py-2 sm:w-48 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
         />
+        <select
+          value={filtroRisco}
+          onChange={(e) => setFiltroRisco(e.target.value)}
+          className="w-full rounded border border-gray-300 px-4 py-2 sm:w-40 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+        >
+          <option value="todos">Todos (Risco)</option>
+          <option value="BOM">Bom</option>
+          <option value="MEDIO">Médio</option>
+          <option value="RUIM">Ruim</option>
+        </select>
+        <select
+          value={filtroStatus}
+          onChange={(e) => setFiltroStatus(e.target.value as "todos" | "ativo" | "inativo")}
+          className="w-full rounded border border-gray-300 px-4 py-2 sm:w-40 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+        >
+          <option value="todos">Todos</option>
+          <option value="ativo">Ativo</option>
+          <option value="inativo">Inativo</option>
+        </select>
         <button
           onClick={abrirNovo}
           className="w-full rounded bg-orange-500 px-4 py-2 font-medium text-white hover:bg-orange-600 sm:w-auto"
@@ -142,6 +182,9 @@ export default function CambistasPage() {
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">
                 Login
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">
+                Tipo
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">
                 Cotação / Comissão
@@ -171,6 +214,11 @@ export default function CambistasPage() {
                   <div className="text-xs text-gray-500">
                     Gerente: {getGerenteNome(c.gerenteId)}
                   </div>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`rounded-full px-2 py-1 text-xs ${(c.tipo ?? "cambista") === "cliente" ? "bg-blue-100 text-blue-700" : "bg-amber-100 text-amber-700"}`}>
+                    {(c.tipo ?? "cambista") === "cliente" ? "Cliente" : "Cambista"}
+                  </span>
                 </td>
                 <td className="px-4 py-3 text-xs text-gray-600">
                   <div>M: {c.cotacaoM} / C: {c.cotacaoC} / D: {c.cotacaoD} / G: {c.cotacaoG}</div>
@@ -236,6 +284,19 @@ export default function CambistasPage() {
                   onChange={(e) => setForm({ ...form, senha: e.target.value })}
                   className="mt-1 w-full rounded border px-3 py-2"
                 />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">Tipo:</label>
+                <select
+                  value={form.tipo ?? "cambista"}
+                  onChange={(e) =>
+                    setForm({ ...form, tipo: e.target.value as "cambista" | "cliente" })
+                  }
+                  className="mt-1 w-full rounded border px-3 py-2"
+                >
+                  <option value="cambista">Cambista</option>
+                  <option value="cliente">Cliente</option>
+                </select>
               </div>
               <div>
                 <label className="text-sm text-gray-600">Gerente:</label>
@@ -362,6 +423,18 @@ export default function CambistasPage() {
                     className="rounded border px-3 py-2"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">Risco:</label>
+                <select
+                  value={form.risco}
+                  onChange={(e) => setForm({ ...form, risco: e.target.value })}
+                  className="mt-1 w-full rounded border px-3 py-2"
+                >
+                  <option value="BOM">Bom</option>
+                  <option value="MEDIO">Médio</option>
+                  <option value="RUIM">Ruim</option>
+                </select>
               </div>
               <div>
                 <label className="text-sm text-gray-600">Milhar brinde:</label>

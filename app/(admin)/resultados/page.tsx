@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { getResultados, getExtracoes, addResultado } from "@/lib/store";
+import { addLog } from "@/lib/auditoria";
 
 function normalizarData(d: Date): string {
   return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" });
@@ -10,6 +11,7 @@ function normalizarData(d: Date): string {
 export default function ResultadosAdminPage() {
   const [resultados, setResultados] = useState(getResultados());
   const [dataSelecionada, setDataSelecionada] = useState(() => normalizarData(new Date()).replace(/\//g, "-").split("-").reverse().join("-"));
+  const [filtroTipo, setFiltroTipo] = useState("");
   const [extracaoId, setExtracaoId] = useState("");
   const [premios, setPremios] = useState<Record<number, string>>(() => {
     const o: Record<number, string> = {};
@@ -17,8 +19,13 @@ export default function ResultadosAdminPage() {
     return o;
   });
   const [showForm, setShowForm] = useState(false);
+  const [verResultado, setVerResultado] = useState<{ extracaoNome: string; grupos: string; premios: Record<number, string> } | null>(null);
 
-  const extracoes = getExtracoes();
+  const extracoesAll = getExtracoes();
+  const tiposUnicos = Array.from(new Set(extracoesAll.map((e) => e.nome.split(" ")[0] || e.nome))).sort();
+  const extracoes = filtroTipo
+    ? extracoesAll.filter((e) => e.nome.toUpperCase().includes(filtroTipo.toUpperCase()))
+    : extracoesAll;
 
   useEffect(() => {
     setResultados(getResultados());
@@ -50,6 +57,7 @@ export default function ResultadosAdminPage() {
       grupos: grupos1,
       premios: premiosObj,
     });
+    addLog("Adicionou resultado", `${ext.nome} - ${dataNorm}`);
     setResultados(getResultados());
     setExtracaoId("");
     setPremios(() => {
@@ -75,6 +83,19 @@ export default function ResultadosAdminPage() {
           onChange={(e) => setDataSelecionada(e.target.value)}
           className="rounded border border-gray-300 px-3 py-2 text-sm"
         />
+        <div>
+          <label className="mr-2 text-sm font-medium text-gray-700">Tipo loteria:</label>
+          <select
+            value={filtroTipo}
+            onChange={(e) => setFiltroTipo(e.target.value)}
+            className="rounded border border-gray-300 px-3 py-2 text-sm"
+          >
+            <option value="">Todas</option>
+            {tiposUnicos.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
         <button
           onClick={() => setShowForm(!showForm)}
           className="rounded bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600"
@@ -134,6 +155,7 @@ export default function ResultadosAdminPage() {
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Extração</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">1º prêmio</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase text-gray-600">Opções</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -150,6 +172,32 @@ export default function ResultadosAdminPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 font-mono text-sm text-gray-700">{r?.grupos ?? "—"}</td>
+                    <td className="px-4 py-3 text-center">
+                      {r ? (
+                        <button
+                          type="button"
+                          onClick={() => setVerResultado({
+                            extracaoNome: e.nome,
+                            grupos: r.grupos,
+                            premios: r.premios ?? { 1: r.grupos },
+                          })}
+                          className="rounded bg-blue-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-600"
+                        >
+                          Ver Resultado
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExtracaoId(e.id);
+                            setShowForm(true);
+                          }}
+                          className="rounded bg-orange-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-orange-600"
+                        >
+                          Adicionar
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -157,6 +205,51 @@ export default function ResultadosAdminPage() {
           </table>
         </div>
       </div>
+
+      {/* Modal Ver Resultado */}
+      {verResultado && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setVerResultado(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-800">Resultado — {verResultado.extracaoNome}</h2>
+              <button
+                type="button"
+                onClick={() => setVerResultado(null)}
+                className="rounded p-2 text-gray-500 hover:bg-gray-100"
+                aria-label="Fechar"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="space-y-2 text-sm text-gray-700">
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((p) => {
+                const val = verResultado.premios[p] ?? (p === 1 ? verResultado.grupos : null);
+                if (!val) return null;
+                return (
+                  <p key={p}><strong>{p}º prêmio:</strong> {val}</p>
+                );
+              })}
+            </div>
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => setVerResultado(null)}
+                className="rounded bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

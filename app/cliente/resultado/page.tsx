@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getResultados } from "@/lib/store";
+import { useVisibilityRefresh } from "@/lib/use-config-refresh";
 
 export default function ClienteResultadoPage() {
   const router = useRouter();
@@ -17,6 +18,8 @@ export default function ClienteResultadoPage() {
     }
     setResultados(getResultados());
   }, [router]);
+
+  useVisibilityRefresh(() => setResultados(getResultados()));
 
   const filtrar = resultados.filter((r) => {
     if (!filtroData) return true;

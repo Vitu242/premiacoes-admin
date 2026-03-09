@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";import { getCambistasPorCodigo, getLancamentos, addLancamento } from "@/lib/store";
+import { useState, useEffect, useMemo } from "react";
+import { getCambistasPorCodigo, getLancamentos, addLancamento, deleteLancamento } from "@/lib/store";
 import { getAdminCodigo } from "@/lib/auth";
+import { addLog } from "@/lib/auditoria";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -12,6 +14,7 @@ export default function LancamentosPage() {
   const cambistas = useMemo(() => getCambistasPorCodigo(codigo ?? ""), [codigo]);
   const [lancamentos, setLancamentos] = useState(getLancamentos());
   const [cambistaId, setCambistaId] = useState("");
+  const [dataLanc, setDataLanc] = useState(() => new Date().toISOString().slice(0, 10));
   const [tipo, setTipo] = useState<"adiantar" | "retirar">("adiantar");
   const [valor, setValor] = useState("");
   const [observacao, setObservacao] = useState("");
@@ -25,13 +28,17 @@ export default function LancamentosPage() {
     if (!cambistaId || !valor) return;
     const v = parseFloat(valor.replace(",", "."));
     if (isNaN(v) || v <= 0) return;
+    const cam = cambistas.find((c) => c.id === cambistaId);
+    const [y, m, d] = dataLanc.split("-");
+    const dataStr = `${d}/${m}/${y}, ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
     addLancamento({
       cambistaId,
       tipo,
       valor: v,
-      data: new Date().toLocaleString("pt-BR"),
+      data: dataStr,
       observacao: observacao.trim() || undefined,
     });
+    addLog("Lançamento", `${tipo}: ${formatarMoeda(v)} para ${cam?.login ?? cambistaId}`);
     setLancamentos(getLancamentos());
     setValor("");
     setObservacao("");
@@ -61,6 +68,16 @@ export default function LancamentosPage() {
                 <option key={c.id} value={c.id}>{c.login}</option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm text-gray-600">Data</label>
+            <input
+              type="date"
+              value={dataLanc}
+              onChange={(e) => setDataLanc(e.target.value)}
+              className="rounded border border-gray-300 px-4 py-2"
+              required
+            />
           </div>
           <div>
             <label className="mb-1 block text-sm text-gray-600">Tipo</label>
@@ -120,12 +137,13 @@ export default function LancamentosPage() {
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Tipo</th>
                 <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-600">Valor</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Obs</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase text-gray-600">Excluir</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
               {filtrar.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
                     Nenhum lançamento encontrado.
                   </td>
                 </tr>
@@ -151,6 +169,21 @@ export default function LancamentosPage() {
                         {l.tipo === "adiantar" ? "+" : "-"} {formatarMoeda(l.valor)}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-500">{l.observacao ?? "-"}</td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirm(`Excluir lançamento de ${formatarMoeda(l.valor)} (${l.tipo})?`)) {
+                              deleteLancamento(l.id);
+                              addLog("Excluiu lançamento", `${l.tipo} ${formatarMoeda(l.valor)}`);
+                              setLancamentos(getLancamentos());
+                            }
+                          }}
+                          className="rounded bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200"
+                        >
+                          Excluir
+                        </button>
+                      </td>
                     </tr>
                   );
                 })

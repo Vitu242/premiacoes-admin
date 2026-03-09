@@ -2,9 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { useSupabase, initFromSupabase } from "@/lib/sync-supabase";
-import { reconferirBilhetesComResultados } from "@/lib/store";
+import { reconferirBilhetesComResultados, recalculateComissaoFromBilhetes } from "@/lib/store";
+import { SYNC_COMPLETE_EVENT } from "@/lib/use-config-refresh";
 
 const SYNC_TIMEOUT_MS = 8000;
+
+async function syncFromSupabase() {
+  await initFromSupabase();
+  reconferirBilhetesComResultados();
+  recalculateComissaoFromBilhetes();
+  window.dispatchEvent(new CustomEvent(SYNC_COMPLETE_EVENT));
+}
 
 export function SupabaseSyncProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(!useSupabase);
@@ -18,14 +26,22 @@ export function SupabaseSyncProvider({ children }: { children: React.ReactNode }
     const timeout = setTimeout(() => {
       if (!cancelled) setReady(true);
     }, SYNC_TIMEOUT_MS);
-    initFromSupabase()
-      .then(() => {
-        reconferirBilhetesComResultados();
-        if (!cancelled) setReady(true);
-      })
+    syncFromSupabase()
+      .then(() => { if (!cancelled) setReady(true); })
       .catch(() => { if (!cancelled) setReady(true); })
       .finally(() => clearTimeout(timeout));
     return () => { cancelled = true; clearTimeout(timeout); };
+  }, []);
+
+  useEffect(() => {
+    if (!useSupabase) return;
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        syncFromSupabase().catch(() => {});
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, []);
 
   if (!ready) {

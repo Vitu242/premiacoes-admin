@@ -6,16 +6,23 @@ import { getAdminCodigo, CODIGO_CHEFE } from "@/lib/auth";
 
 const menuItems = [
   { href: "/", label: "Prestar Contas" },
+  { href: "/dashboard", label: "Dashboard" },
   { href: "/cambistas", label: "Cambistas" },
   { href: "/gerentes", label: "Gerentes" },
   { href: "/saldo", label: "Saldo" },
   { href: "/caixa", label: "Caixa" },
+  { href: "/venda", label: "Venda" },
+  { href: "/relatorio", label: "Relatório" },
   { href: "/bilhetes", label: "Bilhetes" },
   { href: "/lancamentos", label: "Lançamentos" },
   { href: "/resultados", label: "Resultados" },
   { href: "/loterias", label: "Loterias" },
-  { href: "/cotacoes", label: "Cotações" },
+  { href: "/instantanea", label: "Instantânea" },
+  { href: "/sorteio", label: "Sorteio" },
+  { href: "/comissoes", label: "Comissões" },
   { href: "/configuracoes", label: "Configurações" },
+  { href: "/regulamento", label: "Regulamento" },
+  { href: "/auditoria", label: "Auditoria" },
 ];
 
 interface SidebarProps {
@@ -41,7 +48,7 @@ export default function Sidebar({ isOpen = true, onClose }: SidebarProps) {
     <>
       {/* Overlay no mobile quando menu aberto */}
       <div
-        className={`fixed inset-0 z-40 bg-black/50 transition-opacity md:hidden ${
+        className={`fixed inset-0 z-40 bg-black/50 transition-opacity md:hidden print:hidden ${
           isOpen ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
         onClick={onClose}
@@ -50,7 +57,7 @@ export default function Sidebar({ isOpen = true, onClose }: SidebarProps) {
 
       {/* Sidebar - no mobile fica oculto, no desktop sempre visível */}
       <aside
-        className={`fixed left-0 top-0 z-50 flex h-screen w-56 shrink-0 flex-col bg-gray-800 text-white transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${
+        className={`fixed left-0 top-0 z-50 flex h-screen w-56 shrink-0 flex-col bg-gray-800 text-white transition-transform duration-300 ease-in-out md:relative md:translate-x-0 print:hidden ${
           isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         }`}
       >

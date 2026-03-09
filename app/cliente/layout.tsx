@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { ClienteNavBar } from "./ClienteNavBar";
 
 const CLIENTE_PUBLIC_PATHS = ["/cliente/login"];
 
@@ -36,5 +37,12 @@ export default function ClienteLayout({
     );
   }
 
-  return <>{children}</>;
+  const mostraNav = !CLIENTE_PUBLIC_PATHS.includes(pathname);
+
+  return (
+    <>
+      {children}
+      {mostraNav && <ClienteNavBar />}
+    </>
+  );
 }

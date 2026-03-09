@@ -1,5 +1,15 @@
 "use client";
 
+/** Status da modalidade conforme SAE (Tela 17). Ativa e Desbloqueado permitem apostar; Bloqueada não. */
+export type StatusModalidade = "ativa" | "desbloqueado" | "bloqueada";
+
+/** Config por modalidade (admin). Retorna true se o cliente pode apostar. */
+export function modalidadePodeApostar(cfg: { ativa?: boolean; status?: StatusModalidade } | undefined): boolean {
+  if (!cfg) return true;
+  if (typeof cfg.status === "string") return cfg.status !== "bloqueada";
+  return cfg.ativa !== false;
+}
+
 /** Chaves das 22 cotações padrão do jogo do bicho */
 export type CotacaoKey =
   | "milhar"

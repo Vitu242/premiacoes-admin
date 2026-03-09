@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useRouter, usePathname } from "next/navigation";
-import { getCambistas } from "@/lib/store";
+import { useRouter } from "next/navigation";
+import { getCambistas, getConfig } from "@/lib/store";
+import { useConfigRefresh, useVisibilityRefresh } from "@/lib/use-config-refresh";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -14,26 +15,39 @@ const gridItems = [
   { href: "/cliente/resultado", label: "Resultado", icon: "🏆", subtitle: "Agora" },
   { href: "/cliente/repetir", label: "Repetir", icon: "🔄", subtitle: "Agora" },
   { href: "/cliente/caixa", label: "Caixa", icon: "💰", subtitle: "Agora" },
+  { href: "/cliente/relatorio", label: "Relatório", icon: "📊", subtitle: "Suas vendas" },
+  { href: "/cliente/sorteios", label: "Sorteios", icon: "🎲", subtitle: "Eventos" },
   { href: "/cliente/regulamento", label: "Regulamento", icon: "📄", subtitle: "Agora" },
-];
-
-const navItems = [
-  { href: "/cliente", label: "Inicio", icon: "🏠" },
-  { href: "/cliente/vender", label: "Vender", icon: "💵" },
-  { href: "/cliente/caixa", label: "Caixa", icon: "💳" },
-  { href: "/cliente/resultado", label: "Resultados", icon: "🏆" },
 ];
 
 export default function ClienteDashboardPage() {
   const router = useRouter();
-  const pathname = usePathname();
   const [cambista, setCambista] = useState<{
     id: string;
     login: string;
     saldo: number;
     entrada: number;
+    tipo?: "cambista" | "cliente";
   } | null>(null);
   const [codigo, setCodigo] = useState("");
+  const [apostasAtivas, setApostasAtivas] = useState(true);
+
+  const atualizarCambista = () => {
+    const auth = localStorage.getItem("premiacoes_cliente");
+    if (!auth) return;
+    const { cambistaId, codigo: c } = JSON.parse(auth);
+    setCodigo(c || "");
+    const cambistas = getCambistas();
+    const cam = cambistas.find((x) => x.id === cambistaId);
+    if (cam) setCambista({ id: cam.id, login: cam.login, saldo: cam.saldo, entrada: cam.entrada, tipo: cam.tipo });
+  };
+
+  useEffect(() => {
+    const cfg = getConfig();
+    setApostasAtivas(cfg.apostasAtivas ?? true);
+  }, []);
+
+  useConfigRefresh((cfg) => setApostasAtivas(cfg.apostasAtivas ?? true));
 
   useEffect(() => {
     const auth = localStorage.getItem("premiacoes_cliente");
@@ -41,12 +55,10 @@ export default function ClienteDashboardPage() {
       router.replace("/cliente/login");
       return;
     }
-    const { cambistaId, codigo: c } = JSON.parse(auth);
-    setCodigo(c || "");
-    const cambistas = getCambistas();
-    const cam = cambistas.find((x) => x.id === cambistaId);
-    if (cam) setCambista({ id: cam.id, login: cam.login, saldo: cam.saldo, entrada: cam.entrada });
+    atualizarCambista();
   }, [router]);
+
+  useVisibilityRefresh(atualizarCambista);
 
   const handleSair = () => {
     localStorage.removeItem("premiacoes_cliente");
@@ -69,6 +81,9 @@ export default function ClienteDashboardPage() {
           <h1 className="text-lg font-bold text-gray-800">{cambista.login}</h1>
           <p className="text-sm text-gray-500">
             Banca: {codigo ? codigo.charAt(0).toUpperCase() + codigo.slice(1) : "Premiações"}
+            {(cambista.tipo ?? "cambista") === "cliente" && (
+              <span className="ml-1 rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700">Cliente</span>
+            )}
           </p>
         </div>
         <Link
@@ -108,21 +123,21 @@ export default function ClienteDashboardPage() {
         );
       })()}
 
-      {/* Botão Vender (destaque) - gradiente verde */}
+      {/* Botão Vender (destaque) - gradiente verde; desabilitado se apostas inativas ou sem saldo */}
       <div className="mx-4 mt-4">
         <Link
           href="/cliente/vender"
           className={`flex w-full items-center justify-center gap-3 rounded-xl py-4 font-semibold text-white shadow-md transition-opacity ${
-            Math.max(0, cambista.saldo - cambista.entrada) <= 0
+            !apostasAtivas || Math.max(0, cambista.saldo - cambista.entrada) <= 0
               ? "cursor-not-allowed bg-gray-400 opacity-75"
               : "bg-gradient-to-r from-green-600 to-green-500 hover:opacity-95"
           }`}
           onClick={(e) => {
-            if (Math.max(0, cambista.saldo - cambista.entrada) <= 0) e.preventDefault();
+            if (!apostasAtivas || Math.max(0, cambista.saldo - cambista.entrada) <= 0) e.preventDefault();
           }}
         >
           <span className="text-2xl">💵</span>
-          Vender
+          {apostasAtivas ? "Vender" : "Apostas desativadas"}
         </Link>
       </div>
 
@@ -156,25 +171,6 @@ export default function ClienteDashboardPage() {
 
       {/* Versão */}
       <p className="mt-6 text-center text-sm text-gray-400">versão 1.0.0</p>
-
-      {/* Barra de navegação inferior */}
-      <nav className="fixed bottom-0 left-0 right-0 flex justify-around border-t border-gray-200 bg-white py-2 pb-6">
-        {navItems.map((item) => {
-          const isActive = pathname === item.href || (item.href === "/cliente" && pathname === "/cliente");
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex flex-col items-center gap-1 rounded-lg px-4 py-2 ${
-                isActive ? "bg-green-100 text-green-700" : "text-gray-500"
-              }`}
-            >
-              <span className="text-xl">{item.icon}</span>
-              <span className="text-xs font-medium">{item.label}</span>
-            </Link>
-          );
-        })}
-      </nav>
     </div>
   );
 }

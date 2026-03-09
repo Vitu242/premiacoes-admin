@@ -7,6 +7,7 @@ import {
   prestarContasCambista,
   calcularTotalCaixa,
 } from "@/lib/store";
+import { addLog } from "@/lib/auditoria";
 import { getAdminCodigo } from "@/lib/auth";
 import type { Cambista } from "@/lib/types";
 
@@ -33,7 +34,9 @@ export default function PrestarContasPage() {
   );
 
   const handlePrestarContas = (id: string) => {
+    const c = cambistas.find((x) => x.id === id);
     prestarContasCambista(id);
+    addLog("Prestou contas", c?.login ?? id);
     if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
     setDetalhe(null);
   };
@@ -44,7 +47,10 @@ export default function PrestarContasPage() {
         "Prestar conta com todos os cambistas listados? O caixa de cada um será zerado."
       )
     ) {
-      filtrar.forEach((c) => prestarContasCambista(c.id));
+      filtrar.forEach((c) => {
+        prestarContasCambista(c.id);
+        addLog("Prestou contas", c.login);
+      });
       if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
       setDetalhe(null);
     }

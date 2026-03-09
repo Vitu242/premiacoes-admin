@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { getCambistasPorCodigo, getGerentesPorCodigo, calcularTotalCaixa, getJogosEmAberto } from "@/lib/store";
+import {
+  getCambistasPorCodigo,
+  getGerentesPorCodigo,
+  calcularTotalCaixa,
+  getJogosEmAberto,
+  getBilhetes,
+} from "@/lib/store";
 import { getAdminCodigo } from "@/lib/auth";
 
 function formatarMoeda(v: number) {
@@ -31,11 +37,18 @@ export default function CaixaPage() {
   };
   const totalPrestar = calcularTotalCaixa(totalGeral);
 
+  const idsCambistas = new Set(filtrar.map((c) => c.id));
+  const bilhetes = getBilhetes().filter((b) => idsCambistas.has(b.cambistaId));
+  const bilhetesPendentes = bilhetes.filter((b) => b.situacao === "pendente").length;
+  const jogosEmAbertoGeral = bilhetes
+    .filter((b) => b.situacao === "pendente")
+    .reduce((s, b) => s + b.total, 0);
+
   return (
     <div>
       <h1 className="mb-6 text-2xl font-bold text-gray-800">Caixa</h1>
 
-      <div className="mb-4">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <select
           value={filtroGerente}
           onChange={(e) => setFiltroGerente(e.target.value)}
@@ -46,10 +59,21 @@ export default function CaixaPage() {
             <option key={g.id} value={g.id}>{g.login}</option>
           ))}
         </select>
+        <button
+          type="button"
+          onClick={() => window.print()}
+          className="rounded bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 print:hidden"
+        >
+          Resumo para fechamento
+        </button>
       </div>
 
-      <p className="mb-4 text-sm text-gray-600">
+      <p className="mb-1 text-sm text-gray-600">
         Entrada = vendas; Saídas = prêmios já pagos (após sair resultado). Jogos em aberto = valor apostado ainda sem resultado (só entra no caixa após o resultado).
+      </p>
+      <p className="mb-4 text-xs text-gray-500">
+        Bilhetes pendentes nesta seleção: <strong>{bilhetesPendentes}</strong> — Jogos em aberto (geral):{" "}
+        <strong>{formatarMoeda(jogosEmAbertoGeral)}</strong>
       </p>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">

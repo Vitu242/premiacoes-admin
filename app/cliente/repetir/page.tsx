@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getBilhetes } from "@/lib/store";
+import { useVisibilityRefresh } from "@/lib/use-config-refresh";
 
 export default function ClienteRepetirPage() {
   const router = useRouter();
@@ -20,7 +21,7 @@ export default function ClienteRepetirPage() {
     setCambistaId(cid);
   }, [router]);
 
-  useEffect(() => {
+  const atualizarBilhetes = () => {
     if (!cambistaId) return;
     setBilhetes(
       getBilhetes()
@@ -28,7 +29,14 @@ export default function ClienteRepetirPage() {
         .sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime())
         .slice(0, 10)
     );
+  };
+
+  useEffect(() => {
+    if (!cambistaId) return;
+    atualizarBilhetes();
   }, [cambistaId]);
+
+  useVisibilityRefresh(atualizarBilhetes);
 
   return (
     <div className="min-h-screen bg-white p-4 pb-24">

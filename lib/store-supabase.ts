@@ -9,6 +9,7 @@ function toCambista(row: Record<string, unknown>): Cambista {
     id: String(row.id),
     gerenteId: String(row.gerente_id ?? ""),
     codigo: String(row.codigo ?? "default"),
+    tipo: row.tipo === "cliente" ? ("cliente" as const) : ("cambista" as const),
     login: String(row.login ?? ""),
     senha: String(row.senha ?? ""),
     saldo: Number(row.saldo ?? 0),
@@ -32,6 +33,7 @@ function toCambista(row: Record<string, unknown>): Cambista {
     lancamentos: Number(row.lancamentos ?? 0),
     ultimaPrestacao: row.ultima_prestacao ? String(row.ultima_prestacao) : null,
     cotacoes: row.cotacoes != null && typeof row.cotacoes === "object" ? (row.cotacoes as Cambista["cotacoes"]) : undefined,
+    ultimoAcesso: row.ultimo_acesso ? String(row.ultimo_acesso) : undefined,
   };
 }
 
@@ -94,6 +96,7 @@ export async function fetchGerentes(): Promise<Gerente[]> {
     adicionarSaldo: Boolean(r.adicionar_saldo ?? false),
     status: (r.status === "inativo" ? "inativo" : "ativo") as "ativo" | "inativo",
     socio: String(r.socio ?? ""),
+    contasSocio: r.contas_socio ? String(r.contas_socio) : undefined,
     criadoEm: String(r.criado_em ?? ""),
   }));
 }
@@ -133,6 +136,7 @@ export async function upsertCambista(c: Cambista): Promise<void> {
     id: c.id,
     gerente_id: c.gerenteId,
     codigo: c.codigo ?? "default",
+    tipo: c.tipo ?? "cambista",
     login: c.login,
     senha: c.senha,
     saldo: c.saldo,
@@ -156,6 +160,7 @@ export async function upsertCambista(c: Cambista): Promise<void> {
     lancamentos: c.lancamentos,
     ultima_prestacao: c.ultimaPrestacao,
     cotacoes: c.cotacoes ?? null,
+    ultimo_acesso: (c as { ultimoAcesso?: string | null }).ultimoAcesso ?? null,
   });
 }
 
