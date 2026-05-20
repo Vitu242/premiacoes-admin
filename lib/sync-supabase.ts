@@ -384,28 +384,45 @@ export async function initFromSupabase(): Promise<boolean> {
       const porId = new Map<string, CambistaLocal>();
       for (const srv of fromSupabase) porId.set(String(srv.id), srv);
 
+      // IDs de cambistas cuja fila local DEVE ser descartada (o servidor
+      // mostrou uma prestação mais recente, o que invalida qualquer upsert
+      // pendente com valores antigos).
+      const cambistasParaLimparFila = new Set<string>();
+      const TOLERANCIA = 5 * 60 * 1000;
       for (const loc of locaisAntes) {
         const id = String(loc.id);
-        if (idsPendentes.cambistas.has(id)) {
-          porId.set(id, loc);
-          continue;
-        }
         const srv = porId.get(id);
-        if (!srv) continue;
         const rawLoc = loc.ultimaPrestacao;
-        const rawSrv = srv.ultimaPrestacao;
+        const rawSrv = srv?.ultimaPrestacao;
         const sLoc = typeof rawLoc === "string" ? rawLoc : rawLoc != null ? String(rawLoc) : "";
         const sSrv = typeof rawSrv === "string" ? rawSrv : rawSrv != null ? String(rawSrv) : "";
         const tLoc = parseDataPtBrOuIso(sLoc || null);
         const tSrv = parseDataPtBrOuIso(sSrv || null);
-        // Tolerância de 5min cobre divergência mínima de relógio entre
-        // servidor e cliente. Se as prestações são "praticamente a mesma"
-        // ou local é mais recente, o local ganha — porque os valores
-        // foram zerados localmente após essa prestação.
-        const tolerancia = 5 * 60 * 1000;
+
+        // Servidor com prestação mais recente que a local (com tolerância
+        // de 5 min de relógio) → admin acabou de prestar contas. Aceita
+        // o servidor INTEGRALMENTE e descarta qualquer upsert pendente do
+        // cambista (esses upserts contêm valores ANTERIORES à prestação).
+        if (srv && tSrv && (!tLoc || tSrv.getTime() > tLoc.getTime() + TOLERANCIA)) {
+          porId.set(id, srv);
+          if (idsPendentes.cambistas.has(id)) cambistasParaLimparFila.add(id);
+          continue;
+        }
+
+        // Caso contrário, se há upsert pendente local, mantém local
+        // (preserva venda offline ainda não sincronizada).
+        if (idsPendentes.cambistas.has(id)) {
+          porId.set(id, loc);
+          continue;
+        }
+        if (!srv) continue;
+
+        // Última prestação local é igual ou mais recente que a do servidor:
+        // o LOCAL ganha (preserva os zeros aplicados após prestar contas
+        // localmente).
         const locVenceuPrestacao =
           (sLoc && sSrv && sLoc === sSrv) ||
-          (tLoc && (!tSrv || tLoc.getTime() + tolerancia >= tSrv.getTime()));
+          (tLoc && (!tSrv || tLoc.getTime() + TOLERANCIA >= tSrv.getTime()));
         if (locVenceuPrestacao) {
           porId.set(id, {
             ...srv,
@@ -415,6 +432,40 @@ export async function initFromSupabase(): Promise<boolean> {
             lancamentos: loc.lancamentos,
             ultimaPrestacao: loc.ultimaPrestacao,
           });
+        }
+      }
+
+      // Limpa upserts pendentes dos cambistas cuja prestação foi
+      // sobrescrita pelo servidor. Sem isso, o próximo flush subiria os
+      // valores antigos e ressuscitaria o caixa zerado.
+      if (cambistasParaLimparFila.size > 0) {
+        try {
+          const QKEY = "premiacoes_sync_queue";
+          const raw = localStorage.getItem(QKEY);
+          if (raw) {
+            const fila = JSON.parse(raw) as Array<{
+              op?: { kind?: string; table?: string; payload?: unknown; match?: { id?: unknown } };
+            }>;
+            const novaFila = fila.filter((it) => {
+              const op = it?.op;
+              if (!op || op.table !== "cambistas") return true;
+              if (op.kind === "upsert") {
+                const arr = Array.isArray(op.payload) ? op.payload : [op.payload];
+                return !arr.some((p) =>
+                  cambistasParaLimparFila.has(
+                    String((p as { id?: unknown } | null | undefined)?.id ?? ""),
+                  ),
+                );
+              }
+              if (op.kind === "update" && op.match?.id) {
+                return !cambistasParaLimparFila.has(String(op.match.id));
+              }
+              return true;
+            });
+            localStorage.setItem(QKEY, JSON.stringify(novaFila));
+          }
+        } catch {
+          /* ignore */
         }
       }
 
