@@ -411,8 +411,18 @@ function pickLoteria(
   if (!candidatos.length) return null;
 
   // Extrai o número HH do alias (ex.: "LT BAHIA 10HS" → 10). Pega o que estiver
-  // mais próximo da hora pedida (tolera diferença de 1h).
-  let melhor: { item: SLoteria; diff: number } | null = null;
+  // mais próximo da hora pedida.
+  //
+  // Em caso de empate (mesma diferença) preferimos o alias com h >= hora,
+  // porque o nosso `encerra` muitas vezes é HH:55 (5 min antes do sorteio):
+  //   "MALUCA BA 12:00" → encerra=11:55 → hora=11
+  //   aliases existentes: ...10HS, 12HS, 15HS...
+  //   diff(10)=1, diff(12)=1 → SEM esse desempate, escolheria 10HS por ordem
+  //   (que é o sorteio das 10h, NÃO o das 12h).
+  //
+  // Tolerância: 1h é suficiente para cobrir HH:55 → HH+1:00 sem encostar
+  // em sorteios vizinhos errados.
+  let melhor: { item: SLoteria; diff: number; h: number } | null = null;
   for (const c of candidatos) {
     const m = c.alias.match(/(\d{1,2})\s*HS/i);
     if (!m) continue;
@@ -420,7 +430,17 @@ function pickLoteria(
     if (Number.isNaN(h)) continue;
     const diff = Math.abs(h - hora);
     if (diff > 1) continue;
-    if (!melhor || diff < melhor.diff) melhor = { item: c, diff };
+    if (!melhor) {
+      melhor = { item: c, diff, h };
+      continue;
+    }
+    if (diff < melhor.diff) {
+      melhor = { item: c, diff, h };
+      continue;
+    }
+    if (diff === melhor.diff && h >= hora && melhor.h < hora) {
+      melhor = { item: c, diff, h };
+    }
   }
   return melhor?.item ?? null;
 }
@@ -435,13 +455,50 @@ export async function resolverLoteriaFeiticeira(
 ): Promise<SLoteria | null> {
   const nomeNorm = normalizarNome(nomeExtracao);
   if (!nomeNorm) return null;
-  const m = String(encerra ?? "").match(/(\d{1,2})\s*[:hH]?\s*(\d{2})?/);
-  if (!m) return null;
-  const hora = parseInt(m[1] ?? "0", 10);
+
+  // CRÍTICO: o `encerra` cadastrado costuma ser 5 min antes do sorteio
+  // (ex.: "MALUCA BA 12:00" tem encerra="11:55"). Se tirássemos a hora do
+  // encerra teríamos hora=11, que é ambígua entre o sorteio das 10h e o das
+  // 12h e fazia o sistema gravar o resultado errado.
+  // Solução: extrair a hora prioritariamente do NOME da extração (que sempre
+  // termina com o horário real do sorteio "HH:MM"). Só se não houver,
+  // fallback para o encerra arredondando minutos >= 30 para a hora seguinte.
+  const horaDoNome = extrairHoraDoNome(nomeExtracao);
+  const horaDoEncerra = extrairHoraComArred(encerra);
+  const hora = horaDoNome ?? horaDoEncerra;
+  if (hora == null) return null;
+
   const familia = identificarFamilia(nomeNorm, hora);
   if (!familia) return null;
   const catalogo = await obterCatalogoLoterias();
   return pickLoteria(catalogo, familia, hora);
+}
+
+/** Extrai a hora cheia do texto "MALUCA BA 12:00" → 12. Retorna null se não casar. */
+function extrairHoraDoNome(nome: string): number | null {
+  const s = String(nome ?? "");
+  // Pega o ÚLTIMO HH:MM do nome (alguns nomes legados podem ter números antes).
+  const matches = [...s.matchAll(/(\d{1,2}):(\d{2})/g)];
+  if (matches.length === 0) return null;
+  const ultimo = matches[matches.length - 1];
+  const h = parseInt(ultimo?.[1] ?? "0", 10);
+  const mi = parseInt(ultimo?.[2] ?? "0", 10);
+  if (h < 0 || h > 23 || mi < 0 || mi > 59) return null;
+  return h;
+}
+
+/**
+ * Extrai a hora do `encerra` ("HH:MM"). Se os minutos forem >= 30, arredonda
+ * para a hora seguinte (encerra=11:55 → hora=12), porque o sorteio acontece
+ * APÓS o fechamento, normalmente na hora cheia seguinte.
+ */
+function extrairHoraComArred(encerra: string): number | null {
+  const m = String(encerra ?? "").match(/(\d{1,2})\s*[:hH]\s*(\d{2})/);
+  if (!m) return null;
+  const h = parseInt(m[1] ?? "0", 10);
+  const mi = parseInt(m[2] ?? "0", 10);
+  if (h < 0 || h > 23) return null;
+  return mi >= 30 ? (h + 1) % 24 : h;
 }
 
 /** Limpa cache de token (uso em testes/debug). */

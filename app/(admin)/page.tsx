@@ -176,7 +176,7 @@ export default function PrestarContasPage() {
           className="w-full rounded border border-emerald-500 bg-white px-4 py-2 font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 sm:w-auto"
           title="Recalcula entrada/saída/comissão/lançamentos a partir dos bilhetes e lançamentos. Útil após o site ficar fora do ar."
         >
-          Reconciliar caixa
+          Atualizar Caixa
         </button>
         {/* Botão pequeno e discreto: restaurar caixa de backup. Só admin do
             chefe (com senha) consegue confirmar a operação. */}
