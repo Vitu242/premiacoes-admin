@@ -15,9 +15,26 @@ export function ServiceWorkerRegister() {
       window.location.hostname === "127.0.0.1";
     if (!isSecure) return;
 
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
     const onLoad = () => {
       navigator.serviceWorker
         .register("/sw.js", { scope: "/" })
+        .then((reg) => {
+          // Checa atualização imediatamente e a cada 5 min. Sem isso,
+          // browsers só revalidam o SW de tempos em tempos (até 24h),
+          // o que mantém PWAs presos em versões antigas.
+          reg.update().catch(() => null);
+          intervalId = setInterval(() => {
+            reg.update().catch(() => null);
+          }, 5 * 60 * 1000);
+          // Também checa quando a aba volta a ficar visível
+          document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") {
+              reg.update().catch(() => null);
+            }
+          });
+        })
         .catch(() => {
           /* ignore */
         });
@@ -25,7 +42,10 @@ export function ServiceWorkerRegister() {
 
     if (document.readyState === "complete") onLoad();
     else window.addEventListener("load", onLoad);
-    return () => window.removeEventListener("load", onLoad);
+    return () => {
+      window.removeEventListener("load", onLoad);
+      if (intervalId) clearInterval(intervalId);
+    };
   }, []);
 
   return null;
