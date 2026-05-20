@@ -4,6 +4,7 @@ import "./globals.css";
 import { SupabaseSyncProvider } from "./SupabaseSyncProvider";
 import { SupabaseStatus } from "./components/SupabaseStatus";
 import { ServiceWorkerRegister } from "./components/ServiceWorkerRegister";
+import { UpdateChecker } from "./components/UpdateChecker";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { BrandingProvider } from "./components/BrandingProvider";
 
@@ -102,6 +103,7 @@ export default function RootLayout({
               {children}
               <SupabaseStatus />
               <ServiceWorkerRegister />
+              <UpdateChecker />
             </SupabaseSyncProvider>
           </BrandingProvider>
         </ThemeProvider>

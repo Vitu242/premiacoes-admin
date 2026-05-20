@@ -124,6 +124,28 @@ export function SupabaseStatus() {
     }
   };
 
+  /** Força atualização do app: limpa caches do Service Worker e recarrega.
+   *  Útil quando o cliente está em uma versão antiga do bundle (especialmente
+   *  PWA instalado, onde o cache pode persistir). */
+  const atualizarApp = async () => {
+    if (!confirm("Atualizar o app?\nA página vai recarregar — seus dados locais (jogos não enviados) ficam salvos.")) {
+      return;
+    }
+    try {
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+    } catch {
+      /* ignore */
+    }
+    location.reload();
+  };
+
   return (
     <div className="pointer-events-none fixed bottom-[5.5rem] right-3 z-[9999] flex items-end gap-2 sm:bottom-3">
       {open && (
@@ -198,6 +220,14 @@ export function SupabaseStatus() {
               </button>
             </>
           )}
+          <button
+            type="button"
+            onClick={atualizarApp}
+            className="mt-2 w-full rounded border border-blue-300 bg-blue-50 px-2 py-1.5 text-[11px] font-medium text-blue-800 hover:bg-blue-100 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-100"
+            title="Limpa o cache do app e recarrega para baixar a versão mais recente."
+          >
+            Atualizar app (limpar cache)
+          </button>
         </div>
       )}
       <button

@@ -1,5 +1,5 @@
 /* Premiações – Service Worker simples (offline-first para shell) */
-const CACHE_VERSION = "v4";
+const CACHE_VERSION = "v5";
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `runtime-${CACHE_VERSION}`;
 

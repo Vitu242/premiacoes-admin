@@ -339,6 +339,17 @@ function deveUsarServidor(op: SyncOp): boolean {
   return n > 5; // bilhetes <=5 e demais <=5 vão direto
 }
 
+function isAuthError(msg: string): boolean {
+  const m = (msg ?? "").toLowerCase();
+  return (
+    m.includes("auth obrigat") ||
+    m.includes("n\u00e3o autorizado") ||
+    m.includes("nao autorizado") ||
+    m.includes("401") ||
+    m.includes("credenciais inv\u00e1lidas")
+  );
+}
+
 async function executar(op: SyncOp): Promise<void> {
   if (!useSupabase || !supabase) throw new Error("Supabase desligado");
 
@@ -349,7 +360,21 @@ async function executar(op: SyncOp): Promise<void> {
       registrarSucesso();
       return;
     } catch (e) {
-      registrarFalha((e as Error).message);
+      const msg = (e as Error).message;
+      // Sem sessão (logout/sessão expirada) o servidor recusa com 401, mas
+      // o cliente AINDA pode tentar Supabase direto via anon key. Sem este
+      // fallback, fila de cliente deslogado nunca esvazia.
+      if (isAuthError(msg)) {
+        try {
+          const result = await executeSyncOp(supabase, op);
+          await limparTombstoneSeDelete(op, result.deleted);
+          registrarSucesso();
+          return;
+        } catch {
+          /* fallback falhou — propaga erro original */
+        }
+      }
+      registrarFalha(msg);
       throw e;
     }
   }
@@ -369,7 +394,18 @@ async function executar(op: SyncOp): Promise<void> {
     await executarViaServidor(op);
     registrarSucesso();
   } catch (e) {
-    registrarFalha((e as Error).message);
+    const msg = (e as Error).message;
+    // Mesmo fallback: se 401 no servidor, tenta direto.
+    if (isAuthError(msg)) {
+      try {
+        await executeSyncOp(supabase, op);
+        registrarSucesso();
+        return;
+      } catch {
+        /* propaga erro original */
+      }
+    }
+    registrarFalha(msg);
     throw e;
   }
 }
@@ -448,6 +484,23 @@ async function flushUnlocked(): Promise<{ ok: number; pendentes: number }> {
         continue;
       } catch (e) {
         const msg = (e as Error).message;
+        // Se o servidor recusou por auth, tenta direto cada op (sem
+        // sessão, fila do cliente deslogado ainda esvazia).
+        if (isAuthError(msg) && supabase) {
+          for (const it of proximos) {
+            try {
+              await executeSyncOp(supabase, it.op);
+              ok++;
+            } catch (e2) {
+              it.tries += 1;
+              it.lastError = (e2 as Error).message;
+              if (it.tries < MAX_RETRIES) restantes.push(it);
+              else pushDeadLetter([it]);
+            }
+          }
+          i += proximos.length;
+          continue;
+        }
         for (const it of proximos) {
           it.tries += 1;
           it.lastError = msg;
