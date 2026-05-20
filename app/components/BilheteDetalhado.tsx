@@ -12,6 +12,8 @@ interface Props {
   cotacaoPara: (modalidade: string) => number;
   rodapeTexto?: string;
   logoUrl?: string | null;
+  /** Tipo da extração (ex: "TRADICIONAL", "FEDERAL"). Default: TRADICIONAL. */
+  tipoExtracao?: string;
 }
 
 function moeda(v: number) {
@@ -365,11 +367,12 @@ const S: Record<string, CSSProperties> = {
 };
 
 const BilheteDetalhado = forwardRef<HTMLDivElement, Props>(function BilheteDetalhado(
-  { bilhete: b, bancaNome, cambistaNome, cotacaoPara, rodapeTexto, logoUrl },
+  { bilhete: b, bancaNome, cambistaNome, cotacaoPara, rodapeTexto, logoUrl, tipoExtracao },
   ref
 ) {
   const sit = SITUACAO_LABEL[b.situacao] ?? SITUACAO_LABEL.pendente;
   const { nome: extNome, horario: extHora } = separarExtracaoHorario(b.extracaoNome);
+  const tipoLabel = (tipoExtracao || "TRADICIONAL").toUpperCase();
 
   return (
     <div ref={ref} className="bilhete-card" style={S.card}>
@@ -411,7 +414,7 @@ const BilheteDetalhado = forwardRef<HTMLDivElement, Props>(function BilheteDetal
       <div style={S.banner}>
         <div style={S.bannerLeft}>
           <span style={{ color: "#fbbf24" }}>●</span>
-          <span>TRADICIONAL</span>
+          <span>{tipoLabel}</span>
         </div>
         <div style={S.bannerRight}>
           <span style={S.bannerName}>{extNome}</span>

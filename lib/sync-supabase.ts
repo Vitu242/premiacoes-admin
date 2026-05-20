@@ -36,7 +36,14 @@ function getIdsComUpsertPendente(): {
     extracoes: new Set<string>(),
   };
   if (typeof window === "undefined") return vazios;
-  let fila: Array<{ op?: { kind?: string; table?: string; payload?: unknown } }> = [];
+  let fila: Array<{
+    op?: {
+      kind?: string;
+      table?: string;
+      payload?: unknown;
+      match?: { id?: unknown };
+    };
+  }> = [];
   try {
     const raw = localStorage.getItem("premiacoes_sync_queue");
     fila = raw ? JSON.parse(raw) : [];
@@ -45,14 +52,21 @@ function getIdsComUpsertPendente(): {
   }
   for (const item of fila) {
     const op = item?.op;
-    if (!op || op.kind !== "upsert") continue;
+    if (!op) continue;
     const tabela = String(op.table ?? "");
     const alvo = (vazios as Record<string, Set<string>>)[tabela];
     if (!alvo) continue;
-    const payload = op.payload;
-    const items = Array.isArray(payload) ? payload : [payload];
-    for (const p of items) {
-      const id = (p as { id?: unknown } | null | undefined)?.id;
+    // Inclui upsert, update e delete — qualquer op pendente significa que
+    // o local tem alteração não-confirmada e o servidor pode estar atrasado.
+    if (op.kind === "upsert") {
+      const payload = op.payload;
+      const items = Array.isArray(payload) ? payload : [payload];
+      for (const p of items) {
+        const id = (p as { id?: unknown } | null | undefined)?.id;
+        if (id != null) alvo.add(String(id));
+      }
+    } else if (op.kind === "update" || op.kind === "delete") {
+      const id = op.match?.id;
       if (id != null) alvo.add(String(id));
     }
   }

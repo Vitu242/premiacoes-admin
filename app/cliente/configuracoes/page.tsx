@@ -26,6 +26,7 @@ export default function ClienteConfiguracoesPage() {
   const [confirmar, setConfirmar] = useState("");
   const [verSenha, setVerSenha] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  const [loadFalhou, setLoadFalhou] = useState(false);
   const [mensagem, setMensagem] = useState<{
     tipo: "ok" | "erro";
     texto: string;
@@ -41,13 +42,25 @@ export default function ClienteConfiguracoesPage() {
       router.replace("/cliente/login");
       return;
     }
-    const cam = getCambistas().find((c) => c.id === sessao!.cambistaId);
-    if (!cam) {
-      // Pode ser sync em transição; mostramos "Carregando..." e mantemos
-      // a sessão (igual ao dashboard).
-      return;
-    }
-    setCambista({ id: cam.id, login: cam.login, senhaAtualSalva: cam.senha });
+    const tentarCarregar = () => {
+      const cam = getCambistas().find((c) => c.id === sessao!.cambistaId);
+      if (cam) {
+        setCambista({ id: cam.id, login: cam.login, senhaAtualSalva: cam.senha });
+        return true;
+      }
+      return false;
+    };
+    if (tentarCarregar()) return;
+    // Tenta de novo após 1s (pode estar em sync em transição). Se falhar
+    // após 6s, mostra mensagem em vez de loading infinito.
+    const t1 = setTimeout(() => tentarCarregar(), 1000);
+    const t2 = setTimeout(() => {
+      if (!tentarCarregar()) setLoadFalhou(true);
+    }, 6000);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [router]);
 
   const handleAlterar = (e: React.FormEvent) => {
@@ -110,9 +123,25 @@ export default function ClienteConfiguracoesPage() {
   if (!cambista) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-white dark:bg-slate-950">
-        <div className="text-center">
-          <div className="mx-auto mb-3 h-10 w-10 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent"></div>
-          <p className="text-sm text-gray-500 dark:text-slate-400">Carregando...</p>
+        <div className="max-w-sm text-center">
+          {loadFalhou ? (
+            <>
+              <p className="mb-3 text-sm text-rose-600 dark:text-rose-400">
+                Não foi possível carregar seus dados. Verifique sua conexão e tente novamente.
+              </p>
+              <button
+                onClick={() => location.reload()}
+                className="rounded bg-emerald-500 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600"
+              >
+                Tentar de novo
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="mx-auto mb-3 h-10 w-10 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent"></div>
+              <p className="text-sm text-gray-500 dark:text-slate-400">Carregando...</p>
+            </>
+          )}
         </div>
       </div>
     );

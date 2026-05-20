@@ -88,6 +88,18 @@ export default function CambistasPage() {
     if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
   });
 
+  // Lock scroll body quando modal de edição/criação está aberto.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const aberto = !!(editando || novo);
+    if (!aberto) return;
+    const orig = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = orig;
+    };
+  }, [editando, novo]);
+
   // Mapa de alertas de prejuízo (últimos 30 dias). Recarrega quando a lista de
   // cambistas muda para refletir adições/remoções e novos bilhetes.
   const alertas = useMemo<Map<string, AnaliseCambista>>(() => {

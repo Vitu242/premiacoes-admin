@@ -69,6 +69,32 @@ export function SupabaseSyncProvider({ children }: { children: React.ReactNode }
     };
   }, []);
 
+  // Sync entre abas: quando outra aba do mesmo usuário altera o storage
+  // (venda, prestação, cancelamento), dispara o evento de sync nesta aba
+  // para que componentes que ouvem SYNC_COMPLETE_EVENT revalidem.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const ALVOS = new Set([
+      "premiacoes_cambistas",
+      "premiacoes_bilhetes",
+      "premiacoes_lancamentos",
+      "premiacoes_resultados",
+      "premiacoes_extracoes",
+      "premiacoes_gerentes",
+      "premiacoes_config",
+    ]);
+    const onStorage = (e: StorageEvent) => {
+      if (!e.key || !ALVOS.has(e.key)) return;
+      try {
+        window.dispatchEvent(new CustomEvent(SYNC_COMPLETE_EVENT));
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
   if (!ready) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-slate-900">

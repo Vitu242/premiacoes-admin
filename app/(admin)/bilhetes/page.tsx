@@ -22,6 +22,7 @@ import { initFromSupabase, useSupabase } from "@/lib/sync-supabase";
 import { addLog } from "@/lib/auditoria";
 import { hojeIsoDate, isSameIsoInputDate, formatarDataHoraBr, parseDataPtBrOuIso } from "@/lib/date-utils";
 import { compararBilheteRecentePrimeiro } from "@/lib/list-order";
+import { useVisibilityRefresh } from "@/lib/use-config-refresh";
 import BilheteDetalhado from "@/app/components/BilheteDetalhado";
 import { useBranding } from "@/app/components/BrandingProvider";
 import type { Bilhete } from "@/lib/types";
@@ -83,6 +84,17 @@ export default function BilhetesAdminPage() {
   useEffect(() => {
     refreshBilhetes();
   }, [codigo]);
+  useVisibilityRefresh(refreshBilhetes);
+
+  // Lock body scroll quando o modal de detalhes do bilhete está aberto.
+  useEffect(() => {
+    if (typeof window === "undefined" || !detalheBilhete) return;
+    const orig = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = orig;
+    };
+  }, [detalheBilhete]);
 
   const filtrar = bilhetesDoCodigo.filter((b) => {
     const cam = cambistasParaFiltro.find((c) => c.id === b.cambistaId);

@@ -93,6 +93,27 @@ export function formatarDataBr(input: Date | string | null | undefined): string 
 }
 
 /**
+ * Retorna o "agora" em BRT (America/Sao_Paulo) no formato
+ * "dd/mm/yyyy, HH:mm:ss" — o formato canônico usado em bilhetes/lançamentos.
+ *
+ * O servidor pode estar em UTC; usar `new Date().toLocaleString("pt-BR")` lá
+ * dá horário UTC. Sempre que precisar gerar timestamp em código server-side,
+ * use esta função para garantir BRT.
+ */
+export function agoraBrtFormatado(): string {
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date());
+}
+
+/**
  * Formata em "dd/mm/yyyy HH:mm" (sem segundos) para listagens curtas.
  * Usado em listas de bilhetes/lançamentos onde temos espaço limitado.
  */

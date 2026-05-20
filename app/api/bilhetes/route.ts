@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import crypto from "crypto";
 import { getServerSupabase } from "@/lib/supabase-server";
+import { agoraBrtFormatado } from "@/lib/date-utils";
 
 export const runtime = "nodejs";
 
@@ -112,8 +114,9 @@ export async function POST(req: Request) {
     0,
   );
 
-  const id = String(Date.now());
-  const codigo = String(body.codigo ?? id).slice(-11);
+  // ID não-previsível (UUID v4) e código curto derivado do timestamp.
+  const id = `bil-${crypto.randomUUID()}`;
+  const codigo = String(body.codigo ?? Date.now()).slice(-11);
   const novo = {
     id,
     codigo,
@@ -122,7 +125,8 @@ export async function POST(req: Request) {
     extracao_nome: String(body.extracaoNome ?? ""),
     itens,
     total,
-    data: String(body.data ?? new Date().toLocaleString("pt-BR")),
+    // Data sempre em BRT explícito (servidor pode estar em UTC).
+    data: String(body.data ?? agoraBrtFormatado()),
     situacao: "pendente",
   };
 

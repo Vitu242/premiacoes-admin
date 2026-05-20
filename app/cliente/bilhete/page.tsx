@@ -195,13 +195,8 @@ export default function ClienteBilhetePage() {
             onChange={(e) => setFiltroCodigo(e.target.value)}
             className="flex-1 min-w-[100px] rounded border border-gray-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
           />
-          <button
-            type="button"
-            onClick={() => aplicarFiltros()}
-            className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
-          >
-            Buscar
-          </button>
+          {/* Botão "Buscar" removido — filtros são aplicados automaticamente
+              via useEffect com aplicarFiltros como dependência. */}
         </div>
       </div>
 

@@ -16,7 +16,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   if (!id) return NextResponse.json({ ok: false, erro: "id obrigatório" }, { status: 400 });
 
   const senha = req.headers.get("x-senha-lotobrasil") ?? "";
-  const auth = await autorizarChefe(senha);
+  const auth = await autorizarChefe(senha, req);
   if (!auth.ok) {
     return NextResponse.json({ ok: false, erro: auth.erro || "Não autorizado" }, { status: 401 });
   }

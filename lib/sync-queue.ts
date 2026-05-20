@@ -61,11 +61,25 @@ function loadQueue(): QueueItem[] {
   }
 }
 
+/** Limite máximo de itens na fila ativa. Excedentes vão pra dead-letter
+ *  para o admin investigar — NUNCA descartar sem aviso. */
+const QUEUE_MAX = 500;
+
 function saveQueue(q: QueueItem[]) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(Q_KEY, JSON.stringify(q.slice(0, 500)));
-  } catch {}
+    if (q.length > QUEUE_MAX) {
+      // Move o excesso para a DLQ (em vez de truncar silenciosamente).
+      const ativos = q.slice(0, QUEUE_MAX);
+      const excesso = q.slice(QUEUE_MAX);
+      pushDeadLetter(excesso);
+      localStorage.setItem(Q_KEY, JSON.stringify(ativos));
+      return;
+    }
+    localStorage.setItem(Q_KEY, JSON.stringify(q));
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Itens que esgotaram MAX_RETRIES vão para o "dead letter" — preservados

@@ -1,14 +1,30 @@
 import { getServerSupabase } from "./supabase-server";
 import { verifyPassword } from "./password";
+import { rateLimit, clearRateLimit } from "./rate-limit";
 
 const CODIGO_CHEFE = "Lotobrasil";
 
+/** Rate limit anti-bruteforce: 8 tentativas por minuto, lock de 15 min. */
+const RL_CHEFE = { max: 8, windowMs: 60_000, lockMs: 15 * 60_000 };
+
 /** Autoriza usando a senha do código "Lotobrasil" (chefe).
- *  Operações sensíveis (restaurar caixa, gerir admins) usam isso. */
+ *  Operações sensíveis (restaurar caixa, gerir admins) usam isso.
+ *  Possui rate limit anti-brute-force por IP. */
 export async function autorizarChefe(
   senhaLotobrasil: string,
+  req?: Request,
 ): Promise<{ ok: boolean; erro?: string }> {
   if (!senhaLotobrasil) return { ok: false, erro: "Senha do Lotobrasil é obrigatória." };
+  // Rate limit por IP: 8 tentativas/min, lock 15min após exceder.
+  const ip = req
+    ? (req.headers.get("x-forwarded-for") ?? "").split(",")[0]!.trim() || "unknown"
+    : "unknown";
+  const key = `autorizarChefe:${ip}`;
+  const rl = rateLimit(key, RL_CHEFE);
+  if (!rl.ok) {
+    const min = Math.ceil(rl.retryAfterMs / 60_000);
+    return { ok: false, erro: `Muitas tentativas. Aguarde ${min} minuto(s).` };
+  }
   const sb = getServerSupabase();
   if (!sb) return { ok: false, erro: "DB indisponível" };
   try {
@@ -22,6 +38,7 @@ export async function autorizarChefe(
     if (!verifyPassword(senhaLotobrasil, data.senha)) {
       return { ok: false, erro: "Senha do Lotobrasil incorreta." };
     }
+    clearRateLimit(key); // sucesso libera contador
     return { ok: true };
   } catch (e) {
     return { ok: false, erro: (e as Error).message };

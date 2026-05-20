@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import crypto from "crypto";
 import { getServerSupabase } from "@/lib/supabase-server";
 import { autorizarSyncRequest } from "@/lib/auth-server";
 
@@ -36,7 +37,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, erro: "Body inválido" }, { status: 400 });
   }
 
-  const id = body.id ?? String(Date.now());
+  const id = body.id ?? `res-${crypto.randomUUID()}`;
   const r = {
     id,
     extracao_id: String(body.extracaoId ?? ""),

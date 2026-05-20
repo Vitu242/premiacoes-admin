@@ -3,15 +3,19 @@
 import type { Resultado, ItemBilhete, Bilhete, Cambista } from "./types";
 import type { ModalidadeBilhete } from "./types";
 
-/** Parse "1/3" -> [1,2,3], "5/10" -> [5,6,7,8,9,10] */
-export function parsePremioRange(premio: string): number[] {
+/** Parse "1/3" -> [1,2,3], "5/10" -> [5,6,7,8,9,10].
+ *  `maxPremio` opcional limita o range superior (config da extração).
+ *  Sem isso, atacante poderia forjar bilhete `premio: "1/10"` numa banca
+ *  que só vende até 1/5 e ganhar prêmios das faixas 6..10. */
+export function parsePremioRange(premio: string, maxPremio?: number): number[] {
   const def = [1];
   if (!premio || !premio.includes("/")) return def;
   const [a, b] = premio.split("/").map((x) => parseInt(x.trim(), 10));
   if (isNaN(a) || isNaN(b) || a < 1 || b > 10 || a > b) return def;
+  const cap = Number.isFinite(maxPremio) && maxPremio! > 0 ? Math.min(maxPremio!, 10) : 10;
   const out: number[] = [];
-  for (let p = a; p <= b; p++) out.push(p);
-  return out;
+  for (let p = a; p <= Math.min(b, cap); p++) out.push(p);
+  return out.length ? out : def;
 }
 
 /**
@@ -170,8 +174,8 @@ function splitNumeros(numeros: string, modalidade: string): string[] {
 }
 
 /** Verifica se o item bateu em algum prêmio do range. Usa número oficial do resultado: milhar 4 díg, centena 3, dezena 2, grupo. */
-export function itemBateu(item: ItemBilhete, resultado: Resultado): boolean {
-  const range = parsePremioRange(item.premio ?? "1/1");
+export function itemBateu(item: ItemBilhete, resultado: Resultado, maxPremio?: number): boolean {
+  const range = parsePremioRange(item.premio ?? "1/1", maxPremio);
   const modalidade = item.modalidade;
   const numerosList = splitNumeros(item.numeros, modalidade);
 
@@ -263,8 +267,12 @@ export function itemBateu(item: ItemBilhete, resultado: Resultado): boolean {
 }
 
 /** Para MC: retorna se bateu na milhar e/ou na centena (para aplicar 50/50). */
-export function itemBateuMC(item: ItemBilhete, resultado: Resultado): { milhar: boolean; centena: boolean } {
-  const range = parsePremioRange(item.premio ?? "1/1");
+export function itemBateuMC(
+  item: ItemBilhete,
+  resultado: Resultado,
+  maxPremio?: number,
+): { milhar: boolean; centena: boolean } {
+  const range = parsePremioRange(item.premio ?? "1/1", maxPremio);
   const numerosList = splitNumeros(item.numeros, item.modalidade);
   let milhar = false;
   let centena = false;
@@ -294,13 +302,17 @@ export interface ConferenciaBilhete {
   itens: ConferenciaItem[];
 }
 
-/** Confere bilhete contra resultado. getCotacao(cambista, modalidade) retorna a cotação para cálculo do prêmio. MC aplica regra 50/50. */
+/** Confere bilhete contra resultado. getCotacao(cambista, modalidade) retorna a cotação para cálculo do prêmio. MC aplica regra 50/50.
+ *  `maxPremio` opcional limita o range superior — útil quando a banca/extração
+ *  só vende até 1/5 e o resultado tem 10 prêmios (impede ganho fora da faixa
+ *  vendável). */
 export function conferirBilhete(
   bilhete: Bilhete,
   resultado: Resultado | null,
   cambista: Cambista | null,
   getCotacao: (c: Cambista, mod: ModalidadeBilhete) => number,
   premioMilharBrinde = 0,
+  maxPremio?: number,
 ): ConferenciaBilhete {
   const itens: ConferenciaItem[] = [];
   let valorGanho = 0;
@@ -312,7 +324,15 @@ export function conferirBilhete(
   for (const item of bilhete.itens) {
     const divisor = getPremioDivisor(item.premio);
     const qtdPalpites = splitNumeros(item.numeros, item.modalidade).length;
-    const valorPorPalpite = qtdPalpites >= 1 ? item.valor / qtdPalpites : item.valor;
+
+    // Sem palpites válidos OU valor não-finito: bilhete não pode ganhar nada.
+    // Sem isso, um bilhete corrompido (numeros: "", valor: 100) com qtdPalpites=0
+    // usaria valor integral e poderia gerar prêmio fictício.
+    if (qtdPalpites < 1 || !Number.isFinite(item.valor) || item.valor <= 0) {
+      itens.push({ item, bateu: false, valorGanho: 0 });
+      continue;
+    }
+    const valorPorPalpite = item.valor / qtdPalpites;
 
     let valorGanhoItem = 0;
     let bateu = false;
@@ -320,7 +340,7 @@ export function conferirBilhete(
     let brindeValorGanho = 0;
 
     if (item.modalidade === "milhar_e_centena") {
-      const { milhar: hitMilhar, centena: hitCentena } = itemBateuMC(item, resultado);
+      const { milhar: hitMilhar, centena: hitCentena } = itemBateuMC(item, resultado, maxPremio);
       const cotacaoM = getCotacao(cambista, "milhar");
       const cotacaoC = getCotacao(cambista, "centena");
       const metade = valorPorPalpite / 2;
@@ -328,7 +348,7 @@ export function conferirBilhete(
       if (hitCentena) valorGanhoItem += (metade * cotacaoC) / divisor;
       bateu = hitMilhar || hitCentena;
     } else {
-      bateu = itemBateu(item, resultado);
+      bateu = itemBateu(item, resultado, maxPremio);
       const cotacao = getCotacao(cambista, item.modalidade);
       valorGanhoItem = bateu ? (valorPorPalpite * cotacao) / divisor : 0;
     }
@@ -346,6 +366,11 @@ export function conferirBilhete(
       }
     }
 
+    // Arredonda monetariamente para evitar acúmulo de floats (R$ 153,2600001).
+    valorGanhoItem = Math.round(valorGanhoItem * 100) / 100;
+    if (brindeValorGanho) {
+      brindeValorGanho = Math.round(brindeValorGanho * 100) / 100;
+    }
     valorGanho += valorGanhoItem;
     itens.push({
       item,
@@ -356,5 +381,6 @@ export function conferirBilhete(
     });
   }
 
+  valorGanho = Math.round(valorGanho * 100) / 100;
   return { vencedor: valorGanho > 0, valorGanho, itens };
 }

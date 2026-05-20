@@ -1016,10 +1016,13 @@ function fingerprintVenda(b: Pick<Bilhete, "cambistaId" | "extracaoId" | "total"
   });
 }
 
-/** Evita bilhete duplicado quando o cliente toca 2x ou a rede reenvia a venda. */
+/** Evita bilhete duplicado quando o cliente toca 2x ou a rede reenvia a venda.
+ *  Janela curta de 10 segundos: o suficiente para pegar duplo clique/reenvio
+ *  de rede, mas curta o bastante para não bloquear apostas legítimas
+ *  repetidas (cliente faz mesmo jogo várias vezes em sequência). */
 function bilheteDuplicadoRecente(b: Omit<Bilhete, "id" | "codigo">): Bilhete | null {
   const fp = fingerprintVenda(b);
-  const limiteMs = 120_000;
+  const limiteMs = 10_000;
   const agora = Date.now();
   for (const exist of getBilhetes()) {
     if (exist.cambistaId !== b.cambistaId || exist.extracaoId !== b.extracaoId) continue;
@@ -1034,6 +1037,30 @@ function bilheteDuplicadoRecente(b: Omit<Bilhete, "id" | "codigo">): Bilhete | n
 export async function addBilhete(b: Omit<Bilhete, "id" | "codigo">): Promise<Bilhete> {
   const duplicado = bilheteDuplicadoRecente(b);
   if (duplicado) return duplicado;
+
+  // Validação básica: cada item precisa de números, valor positivo e
+  // cotação > 0 do cambista. Sem isso, o cliente paga e nunca pode ganhar.
+  const cam = getCambistas().find((c) => c.id === b.cambistaId);
+  if (!cam) throw new Error("Cambista não encontrado.");
+  if (cam.status === "excluido" || cam.status === "inativo") {
+    throw new Error("Cambista não está ativo.");
+  }
+  for (const it of b.itens) {
+    if (!Number.isFinite(it.valor) || it.valor <= 0) {
+      throw new Error("Valor inválido em um dos itens.");
+    }
+    if (!String(it.numeros ?? "").trim()) {
+      throw new Error("Item sem números.");
+    }
+    if (it.modalidade !== "milhar_e_centena") {
+      const cot = getCotacaoEfetiva(cam, it.modalidade);
+      if (!Number.isFinite(cot) || cot <= 0) {
+        throw new Error(
+          `Modalidade ${it.modalidade} sem cotação configurada — peça ao admin para ajustar antes de vender.`,
+        );
+      }
+    }
+  }
 
   const check = podeRealizarVenda(b.cambistaId, b.total);
   if (!check.ok) throw new Error(check.erro ?? "Saldo insuficiente para esta venda.");
@@ -1060,14 +1087,12 @@ export async function addBilhete(b: Omit<Bilhete, "id" | "codigo">): Promise<Bil
   };
   lista.push(novo);
   saveBilhetes(lista);
-  const cam = getCambistas().find((c) => c.id === b.cambistaId);
-  if (cam) {
-    const comissaoBilhete = calcularComissaoBilhete(novo, cam);
-    patchCambista(b.cambistaId, (atual) => ({
-      entrada: Math.round(((atual.entrada ?? 0) + b.total) * 100) / 100,
-      comissao: Math.round(((atual.comissao ?? 0) + comissaoBilhete) * 100) / 100,
-    }));
-  }
+  // Reusa o cam validado antes (não relê — `cam` já é desta função).
+  const comissaoBilhete = calcularComissaoBilhete(novo, cam);
+  patchCambista(b.cambistaId, (atual) => ({
+    entrada: Math.round(((atual.entrada ?? 0) + b.total) * 100) / 100,
+    comissao: Math.round(((atual.comissao ?? 0) + comissaoBilhete) * 100) / 100,
+  }));
   if (useSupabase) await pushToSupabase("bilhetes", [novo]);
   return novo;
 }
@@ -1080,7 +1105,9 @@ function baseComissao(mod: string): "grupo" | "dezena" | "centena" | "milhar" {
   return "milhar";
 }
 
-/** Calcula o prêmio potencial máximo do bilhete (valor × cotação ÷ divisor por item) */
+/** Calcula o prêmio potencial máximo do bilhete (valor × cotação ÷ divisor por item).
+ *  Para "milhar_e_centena", a aposta é dividida em duas metades (50% milhar +
+ *  50% centena). O potencial máximo é se AMBOS acertarem — soma das partes. */
 export function calcularPremioPotencialBilhete(bilhete: Bilhete, cambista: Cambista): number {
   let total = 0;
   for (const item of bilhete.itens) {
@@ -1088,7 +1115,8 @@ export function calcularPremioPotencialBilhete(bilhete: Bilhete, cambista: Cambi
     if (item.modalidade === "milhar_e_centena") {
       const cotM = getCotacaoEfetiva(cambista, "milhar");
       const cotC = getCotacaoEfetiva(cambista, "centena");
-      total += (item.valor * (cotM + cotC) / 2) / divisor;
+      const metade = item.valor / 2;
+      total += (metade * cotM) / divisor + (metade * cotC) / divisor;
     } else {
       const cot = getCotacaoEfetiva(cambista, item.modalidade as CotacaoKey);
       total += (item.valor * cot) / divisor;

@@ -42,7 +42,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const auth = await autorizarChefe(body.senhaLotobrasil ?? "");
+  const auth = await autorizarChefe(body.senhaLotobrasil ?? "", req);
   if (!auth.ok) return NextResponse.json({ ok: false, erro: auth.erro }, { status: 401 });
 
   const snapshotId = String(body.snapshotId ?? "");

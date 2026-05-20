@@ -1,10 +1,21 @@
 import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabase-server";
+import { autorizarSyncRequest } from "@/lib/auth-server";
 
 export const runtime = "nodejs";
 
-/** POST /api/bilhetes/:id/cancelar */
-export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+/**
+ * POST /api/bilhetes/:id/cancelar
+ *
+ * Cancela bilhete e reverte caixa do cambista. Exige autenticação:
+ *  - admin com X-Sync-Auth → cancela qualquer bilhete da banca dele
+ *  - cambista com X-Sync-Auth → cancela apenas os PRÓPRIOS bilhetes
+ */
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const auth = await autorizarSyncRequest(req);
+  if (!auth.ok) {
+    return NextResponse.json({ ok: false, erro: auth.erro || "Não autorizado" }, { status: 401 });
+  }
   const { id } = await ctx.params;
   const sb = getServerSupabase();
   if (!sb) return NextResponse.json({ ok: false, erro: "DB indisponível" }, { status: 503 });
@@ -12,6 +23,11 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   const { data: bil, error } = await sb.from("bilhetes").select("*").eq("id", id).maybeSingle();
   if (error || !bil) return NextResponse.json({ ok: false, erro: "Bilhete não encontrado" }, { status: 404 });
   if (bil.situacao === "cancelado") return NextResponse.json({ ok: false, erro: "Já cancelado" }, { status: 400 });
+
+  // Cambista só pode cancelar bilhete próprio
+  if (auth.tipo === "cambista" && String(bil.cambista_id) !== String(auth.cambistaId)) {
+    return NextResponse.json({ ok: false, erro: "Bilhete não pertence ao cambista logado" }, { status: 403 });
+  }
 
   // Reverte caixa do cambista se ainda estava pendente (entrada + comissão estimada)
   if (bil.situacao === "pendente") {
@@ -32,9 +48,23 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       for (const item of itens as Array<{ modalidade?: string; valor?: number }>) {
         const mod = String(item.modalidade ?? "");
         let base: keyof typeof pct = "milhar";
-        if (mod === "grupo" || mod.startsWith("duque_grupo") || mod.startsWith("terno_grupo")) base = "grupo";
-        else if (mod === "dezena" || mod.startsWith("duque_dezena")) base = "dezena";
-        else if (mod === "centena" || mod.includes("centena")) base = "centena";
+        // Mantém alinhado com lib/store.ts:baseComissao (inclui passe → grupo,
+        // duque/terno_dezena → dezena).
+        if (
+          mod === "grupo" ||
+          mod.startsWith("duque_grupo") ||
+          mod.startsWith("terno_grupo") ||
+          mod.startsWith("passe")
+        ) base = "grupo";
+        else if (
+          mod === "dezena" ||
+          mod.startsWith("duque_dezena") ||
+          mod.startsWith("terno_dezena")
+        ) base = "dezena";
+        else if (
+          mod === "centena" ||
+          (mod.includes("centena") && mod !== "milhar_e_centena" && mod !== "mc_invertida")
+        ) base = "centena";
         comissaoBilhete += Number(item.valor ?? 0) * (pct[base] / 100);
       }
       await sb

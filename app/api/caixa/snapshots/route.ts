@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: Request) {
   const senha = req.headers.get("x-senha-lotobrasil") ?? "";
-  const auth = await autorizarChefe(senha);
+  const auth = await autorizarChefe(senha, req);
   if (!auth.ok) {
     return NextResponse.json({ ok: false, erro: auth.erro || "Não autorizado" }, { status: 401 });
   }

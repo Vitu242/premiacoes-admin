@@ -14,6 +14,7 @@ import type { Cambista } from "@/lib/types";
 import { formatarDataHoraBr } from "@/lib/date-utils";
 import { useToast } from "@/app/components/Toast";
 import { RestaurarCaixaModal } from "@/app/components/RestaurarCaixaModal";
+import { useVisibilityRefresh } from "@/lib/use-config-refresh";
 
 function formatarMoeda(valor: number) {
   return valor.toLocaleString("pt-BR", {
@@ -35,6 +36,25 @@ export default function PrestarContasPage() {
   useEffect(() => {
     if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
   }, [codigo]);
+
+  // Re-puxa a lista quando o sync com Supabase completa OU o usuário
+  // volta para esta aba. Sem isso, alterações feitas em outra aba/dispositivo
+  // não apareciam aqui até F5 manual.
+  useVisibilityRefresh(() => {
+    if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
+  });
+
+  // Lock scroll do body quando algum modal está aberto.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const aberto = restaurarOpen || !!detalhe;
+    if (!aberto) return;
+    const orig = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = orig;
+    };
+  }, [restaurarOpen, detalhe]);
 
   const filtrar = cambistas.filter((c) =>
     filtroGerente === "todos" ? true : c.gerenteId === filtroGerente
@@ -201,6 +221,13 @@ export default function PrestarContasPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 bg-white">
+            {filtrar.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
+                  Nenhum cambista para este filtro.
+                </td>
+              </tr>
+            ) : null}
             {filtrar.map((c) => {
               const total = calcularTotalCaixa(c);
               return (

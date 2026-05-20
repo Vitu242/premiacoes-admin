@@ -27,7 +27,7 @@ export async function POST(req: Request) {
 
   const cronOk = autorizarCronInterno(req);
   if (!cronOk) {
-    const auth = await autorizarChefe(body.senhaLotobrasil ?? "");
+    const auth = await autorizarChefe(body.senhaLotobrasil ?? "", req);
     if (!auth.ok) return NextResponse.json({ ok: false, erro: auth.erro }, { status: 401 });
   }
 

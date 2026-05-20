@@ -5,6 +5,7 @@ import { getCambistasPorCodigo, getGerentesPorCodigo, updateCambista } from "@/l
 import { addLog } from "@/lib/auditoria";
 import { getAdminCodigo } from "@/lib/auth";
 import { normalizeLoginKey } from "@/lib/login-normalize";
+import { useVisibilityRefresh } from "@/lib/use-config-refresh";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -25,6 +26,9 @@ export default function SaldoPage() {
   useEffect(() => {
     if (codigo) setCambistas(getCambistasPorCodigo(codigo));
   }, [codigo]);
+  useVisibilityRefresh(() => {
+    if (codigo) setCambistas(getCambistasPorCodigo(codigo));
+  });
 
   /** Aplica delta de saldo de forma atômica com proteção contra duplo clique
    *  e confirmação para alterações grandes. */
@@ -134,6 +138,13 @@ export default function SaldoPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
+            {filtrar.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500">
+                  Nenhum cambista para este filtro.
+                </td>
+              </tr>
+            ) : null}
             {filtrar.map((c) => {
               const disp = Math.max(0, c.saldo - c.entrada);
               return (
