@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
-import Link from "next/link";
 import {
   getExtracoes,
   setExtracoes,
@@ -11,6 +10,8 @@ import {
   deleteExtracao,
   getConfig,
   setConfig,
+  getPremioMaxExtracao,
+  setPremioMaxExtracao,
   getCotacoesPadroes,
   setCotacoesPadroes,
   getCotacaoEfetiva,
@@ -27,10 +28,13 @@ import {
   type CotacoesPadroes,
 } from "@/lib/cotacoes";
 import type { Extracao, DiaSemana } from "@/lib/types";
+import LoteriasTabs from "@/app/components/LoteriasTabs";
+import { useToast } from "@/app/components/Toast";
 
 const DIAS_SEMANA: DiaSemana[] = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
 
 type TabId = "extracoes" | "modalidades" | "cotacoes";
+type ExtracaoForm = Partial<Extracao> & { premioMax?: 5 | 10 };
 
 /** Status da modalidade conforme SAE (Tela 17). */
 type StatusModalidade = "ativa" | "desbloqueado" | "bloqueada";
@@ -44,6 +48,7 @@ interface ModalidadeLinha {
 }
 
 export default function LoteriasUnificadaPage() {
+  const toast = useToast();
   const searchParams = useSearchParams();
   const tabParam = (searchParams.get("tab") || "extracoes") as TabId;
   const tab: TabId = ["extracoes", "modalidades", "cotacoes"].includes(tabParam) ? tabParam : "extracoes";
@@ -56,7 +61,7 @@ export default function LoteriasUnificadaPage() {
   const [filtroNome, setFiltroNome] = useState("");
   const [editando, setEditando] = useState<Extracao | null>(null);
   const [novo, setNovo] = useState(false);
-  const [form, setForm] = useState<Partial<Extracao>>({ nome: "", encerra: "12:00", ativa: true, tipo: "Tradicional", dias: [...DIAS_SEMANA] });
+  const [form, setForm] = useState<ExtracaoForm>({ nome: "", encerra: "12:00", ativa: true, tipo: "Tradicional", dias: [...DIAS_SEMANA], premioMax: 10 });
 
   // Modalidades
   const [linhas, setLinhas] = useState<ModalidadeLinha[]>([]);
@@ -81,7 +86,7 @@ export default function LoteriasUnificadaPage() {
   useEffect(() => {
     if (tab === "modalidades") {
       const cfg = getConfig();
-      const base = (cfg as unknown as { modalidades?: Record<string, { minValor: number; maxValor: number; ativa?: boolean; status?: StatusModalidade }> }).modalidades ?? {};
+      const base = cfg.modalidades ?? {};
       const inicial: ModalidadeLinha[] = COTACOES_KEYS_ORDER.map((key) => {
         const atual = base[key as string];
         const statusVal = atual?.status ?? (atual?.ativa === false ? "bloqueada" : "ativa");
@@ -115,20 +120,22 @@ export default function LoteriasUnificadaPage() {
   const salvarExtracao = () => {
     if (novo) {
       if (!form.nome?.trim()) {
-        alert("Informe o nome da extração.");
+        toast.error("Informe o nome da extração.");
         return;
       }
-      addExtracao({
+      const criada = addExtracao({
         nome: form.nome.trim(),
         encerra: form.encerra ?? "12:00",
         ativa: form.ativa ?? true,
         tipo: form.tipo?.trim() || undefined,
         dias: form.dias && form.dias.length > 0 ? form.dias : undefined,
       });
+      setPremioMaxExtracao(criada.id, form.premioMax ?? 10);
       addLog("Criou loteria", form.nome.trim());
+      toast.success(`Loteria "${form.nome.trim()}" criada!`);
     } else if (editando) {
       if (!form.nome?.trim()) {
-        alert("Informe o nome da extração.");
+        toast.error("Informe o nome da extração.");
         return;
       }
       updateExtracao(editando.id, {
@@ -138,12 +145,14 @@ export default function LoteriasUnificadaPage() {
         tipo: form.tipo?.trim() || undefined,
         dias: form.dias && form.dias.length > 0 ? form.dias : undefined,
       });
+      setPremioMaxExtracao(editando.id, form.premioMax ?? getPremioMaxExtracao(editando.id));
       addLog("Atualizou loteria", form.nome.trim());
+      toast.success(`Loteria "${form.nome.trim()}" atualizada!`);
     }
     setExtracoesState(getExtracoes());
     setEditando(null);
     setNovo(false);
-    setForm({ nome: "", encerra: "12:00", ativa: true, tipo: "Tradicional", dias: [...DIAS_SEMANA] });
+    setForm({ nome: "", encerra: "12:00", ativa: true, tipo: "Tradicional", dias: [...DIAS_SEMANA], premioMax: 10 });
   };
 
   const restaurarPadrao = () => {
@@ -153,6 +162,7 @@ export default function LoteriasUnificadaPage() {
     addLog("Loterias", "Restaurou lista padrão");
     setEditando(null);
     setNovo(false);
+    toast.success("Lista padrão restaurada (55 loterias).");
   };
 
   const apagarExtracao = (e: Extracao) => {
@@ -161,6 +171,17 @@ export default function LoteriasUnificadaPage() {
     addLog("Apagou loteria", e.nome);
     setExtracoesState(getExtracoes());
     if (editando?.id === e.id) setEditando(null);
+    toast.success(`Loteria "${e.nome}" removida.`);
+  };
+
+  const alternarAtiva = (e: Extracao) => {
+    updateExtracao(e.id, { ativa: !e.ativa });
+    addLog("Loterias", `${e.nome}: ${e.ativa ? "desativada" : "ativada"}`);
+    setExtracoesState(getExtracoes());
+    if (editando?.id === e.id) {
+      setForm((prev) => ({ ...prev, ativa: !e.ativa }));
+    }
+    toast.success(`"${e.nome}" ${e.ativa ? "desativada" : "ativada"}.`);
   };
 
   const atualizarLinha = (idx: number, patch: Partial<ModalidadeLinha>) => {
@@ -182,10 +203,11 @@ export default function LoteriasUnificadaPage() {
         status: l.status,
       };
     }
-    setConfig({ modalidades } as Parameters<typeof setConfig>[0]);
+    setConfig({ modalidades });
     addLog("Modalidades", "Min/máx/ativa atualizados");
     setSalvando(false);
     setMsgModalidades("Modalidades atualizadas com sucesso.");
+    toast.success("Modalidades atualizadas!");
   };
 
   const handleChangeCotacao = (key: CotacaoKey, value: number) => {
@@ -197,38 +219,20 @@ export default function LoteriasUnificadaPage() {
     if (alvo === "padrao") {
       setCotacoesPadroes(valores);
       addLog("Cotações", "Cotações padrão atualizadas");
+      toast.success("Cotações padrão atualizadas!");
     } else if (cambista) {
       updateCambista(cambista.id, { cotacoes: { ...valores } });
       addLog("Cotações", `Override para ${cambista.login}`);
+      toast.success(`Cotações de ${cambista.login} atualizadas!`);
     }
     setSalvo(true);
   };
-
-  const tabs: { id: TabId; label: string }[] = [
-    { id: "extracoes", label: "Extrações" },
-    { id: "modalidades", label: "Modalidades" },
-    { id: "cotacoes", label: "Cotações" },
-  ];
 
   return (
     <div>
       <h1 className="mb-6 text-2xl font-bold text-gray-800">Loterias</h1>
 
-      <div className="mb-6 flex gap-1 border-b border-gray-200">
-        {tabs.map((t) => (
-          <Link
-            key={t.id}
-            href={`/loterias?tab=${t.id}`}
-            className={`rounded-t px-4 py-3 text-sm font-medium transition-colors ${
-              tab === t.id
-                ? "border-b-2 border-orange-500 bg-white text-orange-600 shadow-sm"
-                : "text-gray-600 hover:bg-gray-50 hover:text-gray-800"
-            }`}
-          >
-            {t.label}
-          </Link>
-        ))}
-      </div>
+      <LoteriasTabs />
 
       {/* Aba Extrações */}
       {tab === "extracoes" && (
@@ -245,7 +249,7 @@ export default function LoteriasUnificadaPage() {
               className="rounded border border-gray-300 px-4 py-2 text-sm focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
             />
             <button
-              onClick={() => { setEditando(null); setNovo(true); setForm({ nome: "", encerra: "12:00", ativa: true, tipo: "Tradicional", dias: [...DIAS_SEMANA] }); }}
+              onClick={() => { setEditando(null); setNovo(true); setForm({ nome: "", encerra: "12:00", ativa: true, tipo: "Tradicional", dias: [...DIAS_SEMANA], premioMax: 10 }); }}
               className="rounded bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600"
             >
               Nova extração
@@ -265,6 +269,7 @@ export default function LoteriasUnificadaPage() {
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Tipo</th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Dias</th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Encerra</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Prêmios</th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-600">Status</th>
                   <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-600">Ações</th>
                 </tr>
@@ -278,6 +283,9 @@ export default function LoteriasUnificadaPage() {
                       {e.dias?.length ? e.dias.join(", ") : "Todos"}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600">{e.encerra}</td>
+                    <td className="px-4 py-3 text-sm text-gray-600">
+                      Até 1/{getPremioMaxExtracao(e.id)}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`rounded-full px-2 py-1 text-xs font-medium ${e.ativa ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>
                         {e.ativa ? "Ativa" : "Inativa"}
@@ -285,10 +293,22 @@ export default function LoteriasUnificadaPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button
-                        onClick={() => { setEditando(e); setNovo(false); setForm({ nome: e.nome, encerra: e.encerra, ativa: e.ativa, tipo: e.tipo ?? "Tradicional", dias: e.dias?.length ? e.dias : DIAS_SEMANA }); }}
+                        onClick={() => { setEditando(e); setNovo(false); setForm({ nome: e.nome, encerra: e.encerra, ativa: e.ativa, tipo: e.tipo ?? "Tradicional", dias: e.dias?.length ? e.dias : DIAS_SEMANA, premioMax: getPremioMaxExtracao(e.id) }); }}
                         className="mr-2 rounded bg-orange-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-orange-600"
                       >
                         Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => alternarAtiva(e)}
+                        className={`mr-2 rounded px-3 py-1.5 text-xs font-medium ${
+                          e.ativa
+                            ? "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                            : "bg-green-500 text-white hover:bg-green-600"
+                        }`}
+                        title={e.ativa ? "Desativar esta loteria para apostas" : "Ativar esta loteria para apostas"}
+                      >
+                        {e.ativa ? "Desativar" : "Ativar"}
                       </button>
                       <button
                         onClick={() => apagarExtracao(e)}
@@ -362,6 +382,32 @@ export default function LoteriasUnificadaPage() {
                       className="w-full rounded border border-gray-300 px-4 py-2 [color:#171717]"
                     />
                     <p className="mt-1 text-xs text-gray-500">Horário limite para apostas nesta extração.</p>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm text-gray-600">Prêmios permitidos ao cliente</label>
+                    <div className="flex flex-wrap gap-3 rounded border border-gray-200 bg-gray-50 p-3">
+                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                        <input
+                          type="radio"
+                          name="premioMaxExtracao"
+                          checked={(form.premioMax ?? 10) === 5}
+                          onChange={() => setForm({ ...form, premioMax: 5 })}
+                        />
+                        Até 1/5 (1º ao 5º)
+                      </label>
+                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                        <input
+                          type="radio"
+                          name="premioMaxExtracao"
+                          checked={(form.premioMax ?? 10) === 10}
+                          onChange={() => setForm({ ...form, premioMax: 10 })}
+                        />
+                        Até 1/10 (1º ao 10º)
+                      </label>
+                    </div>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Essa regra vale somente para esta loteria no app do cliente.
+                    </p>
                   </div>
                   <div className="flex items-center gap-2">
                     <input

@@ -55,6 +55,13 @@ function gruposStringToSet(gruposStr: string): Set<string> {
   return set;
 }
 
+function dezenaParaGrupo(dezena: string): string {
+  const n = parseInt(dezena, 10);
+  if (Number.isNaN(n) || n < 0 || n > 99) return "";
+  if (n === 0) return "25";
+  return String(Math.ceil(n / 4)).padStart(2, "0");
+}
+
 function getGruposDoPremio(r: Resultado, premioNum: number): string {
   if (r.premios && r.premios[premioNum]) return r.premios[premioNum];
   if (premioNum === 1) return r.grupos;
@@ -75,11 +82,48 @@ export interface WinningData {
   dezena2: string;
 }
 
-function getWinningData(gruposStr: string): WinningData | null {
-  const setGrupos = gruposStringToSet(gruposStr);
-  const setDezenas = gruposStringToDezenas(gruposStr);
-  const parts = gruposStr.split(/[-,\s]+/).filter(Boolean);
-  if (parts.length < 5) return null;
+function getWinningData(resultadoStr: string): WinningData | null {
+  const parts = resultadoStr.split(/[-,\s]+/).filter(Boolean);
+  if (!parts.length) return null;
+
+  // Resultado lançado como milhar/centena/dezena direta, ex.: "0001".
+  // Nesse caso:
+  //   milhar = 0001
+  //   centena = 001
+  //   dezena = 01
+  //   grupo = 01 (Avestruz)
+  const rawNumber = parts.length === 1 ? parts[0]!.replace(/\D/g, "") : "";
+  if (rawNumber.length >= 3) {
+    const milhar4 = normalizarMilhar(rawNumber);
+    const centena3 = normalizarCentena(rawNumber);
+    const dezena2 = normalizarDezena(rawNumber);
+    const grupo = dezenaParaGrupo(dezena2);
+    return {
+      grupos: grupo ? new Set([grupo]) : new Set(),
+      dezenas: new Set([dezena2]),
+      dezenasOrdenadas: [dezena2],
+      milhar4,
+      centena3,
+      dezena2,
+    };
+  }
+
+  const setGrupos = gruposStringToSet(resultadoStr);
+  const setDezenas = gruposStringToDezenas(resultadoStr);
+
+  // Resultado lançado como um ou mais grupos diretos, ex.: "01" ou "01-02".
+  // Serve para apostas de grupo quando a banca não informa a milhar completa.
+  if (parts.length < 5) {
+    return {
+      grupos: setGrupos,
+      dezenas: setDezenas,
+      dezenasOrdenadas: [],
+      milhar4: "",
+      centena3: "",
+      dezena2: "",
+    };
+  }
+
   const dezenasOrdenadas: string[] = [];
   for (let i = 0; i < 5; i++) {
     const n = parseInt(parts[i], 10);
@@ -154,18 +198,19 @@ export function itemBateu(item: ItemBilhete, resultado: Resultado): boolean {
     if (modalidade === "centena") {
       for (const num of numerosList) {
         const c = normalizarCentena(num);
-        if (c === w.centena3) return true;
+        if (w.centena3 && c === w.centena3) return true;
       }
     }
 
     if (modalidade === "milhar") {
       for (const num of numerosList) {
         const m = normalizarMilhar(num);
-        if (m === w.milhar4) return true;
+        if (w.milhar4 && m === w.milhar4) return true;
       }
     }
 
     if (modalidade === "milhar_invertida") {
+      if (!w.milhar4) continue;
       const winSort = digitosOrdenados(w.milhar4);
       for (const num of numerosList) {
         if (digitosOrdenados(normalizarMilhar(num)) === winSort) return true;
@@ -173,6 +218,7 @@ export function itemBateu(item: ItemBilhete, resultado: Resultado): boolean {
     }
 
     if (modalidade === "centena_invertida") {
+      if (!w.centena3) continue;
       const winSort = digitosOrdenados(w.centena3);
       for (const num of numerosList) {
         if (digitosOrdenados(normalizarCentena(num)) === winSort) return true;
@@ -180,12 +226,12 @@ export function itemBateu(item: ItemBilhete, resultado: Resultado): boolean {
     }
 
     if (modalidade === "mc_invertida") {
-      const winMilhar = digitosOrdenados(w.milhar4);
-      const winCentena = digitosOrdenados(w.centena3);
+      const winMilhar = w.milhar4 ? digitosOrdenados(w.milhar4) : "";
+      const winCentena = w.centena3 ? digitosOrdenados(w.centena3) : "";
       for (const num of numerosList) {
         const m = normalizarMilhar(num);
         const c = normalizarCentena(num);
-        if (digitosOrdenados(m) === winMilhar || digitosOrdenados(c) === winCentena) return true;
+        if ((winMilhar && digitosOrdenados(m) === winMilhar) || (winCentena && digitosOrdenados(c) === winCentena)) return true;
       }
     }
 
@@ -193,7 +239,7 @@ export function itemBateu(item: ItemBilhete, resultado: Resultado): boolean {
       for (const num of numerosList) {
         const m = normalizarMilhar(num);
         const c = normalizarCentena(num);
-        if (m === w.milhar4 || c === w.centena3) return true;
+        if ((w.milhar4 && m === w.milhar4) || (w.centena3 && c === w.centena3)) return true;
       }
     }
 
@@ -227,8 +273,8 @@ export function itemBateuMC(item: ItemBilhete, resultado: Resultado): { milhar: 
     const w = getWinningData(gruposStr ?? "");
     if (!w) continue;
     for (const num of numerosList) {
-      if (normalizarMilhar(num) === w.milhar4) milhar = true;
-      if (normalizarCentena(num) === w.centena3) centena = true;
+      if (w.milhar4 && normalizarMilhar(num) === w.milhar4) milhar = true;
+      if (w.centena3 && normalizarCentena(num) === w.centena3) centena = true;
     }
   }
   return { milhar, centena };
@@ -238,6 +284,8 @@ export interface ConferenciaItem {
   item: ItemBilhete;
   bateu: boolean;
   valorGanho: number;
+  brindeBateu?: boolean;
+  brindeValorGanho?: number;
 }
 
 export interface ConferenciaBilhete {
@@ -251,7 +299,8 @@ export function conferirBilhete(
   bilhete: Bilhete,
   resultado: Resultado | null,
   cambista: Cambista | null,
-  getCotacao: (c: Cambista, mod: ModalidadeBilhete) => number
+  getCotacao: (c: Cambista, mod: ModalidadeBilhete) => number,
+  premioMilharBrinde = 0,
 ): ConferenciaBilhete {
   const itens: ConferenciaItem[] = [];
   let valorGanho = 0;
@@ -267,6 +316,8 @@ export function conferirBilhete(
 
     let valorGanhoItem = 0;
     let bateu = false;
+    let brindeBateu = false;
+    let brindeValorGanho = 0;
 
     if (item.modalidade === "milhar_e_centena") {
       const { milhar: hitMilhar, centena: hitCentena } = itemBateuMC(item, resultado);
@@ -282,8 +333,27 @@ export function conferirBilhete(
       valorGanhoItem = bateu ? (valorPorPalpite * cotacao) / divisor : 0;
     }
 
+    // Milhar brinde é uma regra separada: só vale no 1º prêmio (1/1) e paga
+    // um valor fixo definido pelo admin, independente do valor apostado.
+    if (item.milharBrinde && premioMilharBrinde > 0) {
+      const primeiroPremio = getGruposDoPremio(resultado, 1);
+      const w = getWinningData(primeiroPremio);
+      const brinde = normalizarMilhar(item.milharBrinde);
+      brindeBateu = !!w?.milhar4 && brinde === w.milhar4;
+      if (brindeBateu) {
+        brindeValorGanho = premioMilharBrinde;
+        valorGanhoItem += brindeValorGanho;
+      }
+    }
+
     valorGanho += valorGanhoItem;
-    itens.push({ item, bateu, valorGanho: valorGanhoItem });
+    itens.push({
+      item,
+      bateu: bateu || brindeBateu,
+      valorGanho: valorGanhoItem,
+      brindeBateu,
+      brindeValorGanho,
+    });
   }
 
   return { vencedor: valorGanho > 0, valorGanho, itens };

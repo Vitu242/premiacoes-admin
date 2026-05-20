@@ -1,42 +1,157 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --brand-primary: #f97316;
+  --brand-primary-hover: #ea580c;
+  --brand-primary-fg: #ffffff;
+}
+
+html.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-brand: var(--brand-primary);
+  --color-brand-hover: var(--brand-primary-hover);
+  --color-brand-fg: var(--brand-primary-fg);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html, body {
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans, Arial, Helvetica), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Garantir que inputs tenham texto e placeholder sempre visíveis */
+/* iOS standalone: padding para a barra de status */
+@supports (padding: env(safe-area-inset-top)) {
+  .safe-top { padding-top: env(safe-area-inset-top); }
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+}
+
+/* Scroll suave em listas mobile */
+.smooth-scroll { -webkit-overflow-scrolling: touch; }
+
+/* Esconde scrollbar (área de chips) */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
 input,
 textarea,
 select {
   color: #171717;
+}
+html.dark input,
+html.dark textarea,
+html.dark select {
+  color: #ededed;
+  background-color: #1f2937;
+  border-color: #374151;
 }
 input::placeholder,
 textarea::placeholder {
   color: #6b7280;
 }
 
-/* Modais/cards brancos: texto base sempre escuro (ignora dark mode) */
 [class*="rounded-lg"][class*="bg-white"][class*="shadow"] {
   color: #171717;
+}
+html.dark [class*="rounded-lg"][class*="bg-white"][class*="shadow"] {
+  color: #e5e7eb;
+}
+
+/* === Acessibilidade do modo escuro ===
+ * Eleva o contraste de cores neutras Tailwind muito apagadas (text-gray-300/400/500)
+ * usadas em vários cards do cliente E do admin. Isso evita o problema de texto
+ * "ilegível" quando o usuário troca para o tema escuro sem que cada classe
+ * tenha variant dark:.
+ *
+ * NOTA: o recibo do bilhete (.bilhete-card) mantém fundo branco no dark para
+ * permitir captura em PNG, por isso é excluído (mantém os tons originais).
+ * Fundos coloridos claros (amber/emerald/etc.) também são excluídos porque
+ * eles continuam claros no dark e precisam de texto escuro.
+ */
+html.dark .text-gray-300:not(.bilhete-card .text-gray-300):not(.bg-amber-50 .text-gray-300):not(.bg-amber-100 .text-gray-300):not(.bg-yellow-50 .text-gray-300):not(.bg-emerald-50 .text-gray-300):not(.bg-emerald-100 .text-gray-300):not(.bg-green-50 .text-gray-300):not(.bg-green-100 .text-gray-300):not(.bg-blue-50 .text-gray-300):not(.bg-blue-100 .text-gray-300):not(.bg-red-50 .text-gray-300):not(.bg-red-100 .text-gray-300):not(.bg-rose-50 .text-gray-300):not(.bg-rose-100 .text-gray-300):not(.bg-orange-50 .text-gray-300):not(.bg-orange-100 .text-gray-300) { color: #cbd5e1; }
+html.dark .text-gray-400:not(.bilhete-card .text-gray-400):not(.bg-amber-50 .text-gray-400):not(.bg-amber-100 .text-gray-400):not(.bg-yellow-50 .text-gray-400):not(.bg-emerald-50 .text-gray-400):not(.bg-emerald-100 .text-gray-400):not(.bg-green-50 .text-gray-400):not(.bg-green-100 .text-gray-400):not(.bg-blue-50 .text-gray-400):not(.bg-blue-100 .text-gray-400):not(.bg-red-50 .text-gray-400):not(.bg-red-100 .text-gray-400):not(.bg-rose-50 .text-gray-400):not(.bg-rose-100 .text-gray-400):not(.bg-orange-50 .text-gray-400):not(.bg-orange-100 .text-gray-400) { color: #94a3b8; }
+html.dark .text-gray-500:not(.bilhete-card .text-gray-500):not(.bg-amber-50 .text-gray-500):not(.bg-amber-100 .text-gray-500):not(.bg-yellow-50 .text-gray-500):not(.bg-emerald-50 .text-gray-500):not(.bg-emerald-100 .text-gray-500):not(.bg-green-50 .text-gray-500):not(.bg-green-100 .text-gray-500):not(.bg-blue-50 .text-gray-500):not(.bg-blue-100 .text-gray-500):not(.bg-red-50 .text-gray-500):not(.bg-red-100 .text-gray-500):not(.bg-rose-50 .text-gray-500):not(.bg-rose-100 .text-gray-500):not(.bg-orange-50 .text-gray-500):not(.bg-orange-100 .text-gray-500) { color: #cbd5e1; }
+html.dark .text-gray-600:not(.bilhete-card .text-gray-600):not(.bg-amber-50 .text-gray-600):not(.bg-amber-100 .text-gray-600):not(.bg-yellow-50 .text-gray-600):not(.bg-emerald-50 .text-gray-600):not(.bg-emerald-100 .text-gray-600):not(.bg-green-50 .text-gray-600):not(.bg-green-100 .text-gray-600):not(.bg-blue-50 .text-gray-600):not(.bg-blue-100 .text-gray-600):not(.bg-red-50 .text-gray-600):not(.bg-red-100 .text-gray-600):not(.bg-rose-50 .text-gray-600):not(.bg-rose-100 .text-gray-600):not(.bg-orange-50 .text-gray-600):not(.bg-orange-100 .text-gray-600) { color: #e2e8f0; }
+html.dark .text-gray-700:not(.bilhete-card .text-gray-700):not(.bg-amber-50 .text-gray-700):not(.bg-amber-100 .text-gray-700):not(.bg-yellow-50 .text-gray-700):not(.bg-emerald-50 .text-gray-700):not(.bg-emerald-100 .text-gray-700):not(.bg-green-50 .text-gray-700):not(.bg-green-100 .text-gray-700):not(.bg-blue-50 .text-gray-700):not(.bg-blue-100 .text-gray-700):not(.bg-red-50 .text-gray-700):not(.bg-red-100 .text-gray-700):not(.bg-rose-50 .text-gray-700):not(.bg-rose-100 .text-gray-700):not(.bg-orange-50 .text-gray-700):not(.bg-orange-100 .text-gray-700) { color: #e2e8f0; }
+html.dark .text-gray-800:not(.bilhete-card .text-gray-800):not(.bg-amber-50 .text-gray-800):not(.bg-amber-100 .text-gray-800):not(.bg-yellow-50 .text-gray-800):not(.bg-emerald-50 .text-gray-800):not(.bg-emerald-100 .text-gray-800):not(.bg-green-50 .text-gray-800):not(.bg-green-100 .text-gray-800):not(.bg-blue-50 .text-gray-800):not(.bg-blue-100 .text-gray-800):not(.bg-red-50 .text-gray-800):not(.bg-red-100 .text-gray-800):not(.bg-rose-50 .text-gray-800):not(.bg-rose-100 .text-gray-800):not(.bg-orange-50 .text-gray-800):not(.bg-orange-100 .text-gray-800) { color: #f1f5f9; }
+html.dark .text-gray-900:not(.bilhete-card .text-gray-900):not(.bg-amber-50 .text-gray-900):not(.bg-amber-100 .text-gray-900):not(.bg-yellow-50 .text-gray-900):not(.bg-emerald-50 .text-gray-900):not(.bg-emerald-100 .text-gray-900):not(.bg-green-50 .text-gray-900):not(.bg-green-100 .text-gray-900):not(.bg-blue-50 .text-gray-900):not(.bg-blue-100 .text-gray-900):not(.bg-red-50 .text-gray-900):not(.bg-red-100 .text-gray-900):not(.bg-rose-50 .text-gray-900):not(.bg-rose-100 .text-gray-900):not(.bg-orange-50 .text-gray-900):not(.bg-orange-100 .text-gray-900) { color: #f8fafc; }
+html.dark .text-black:not(.bilhete-card .text-black):not(.bg-amber-50 .text-black):not(.bg-amber-100 .text-black):not(.bg-yellow-50 .text-black):not(.bg-yellow-100 .text-black):not(.bg-emerald-50 .text-black):not(.bg-emerald-100 .text-black):not(.bg-green-50 .text-black):not(.bg-green-100 .text-black):not(.bg-blue-50 .text-black):not(.bg-blue-100 .text-black):not(.bg-red-50 .text-black):not(.bg-red-100 .text-black):not(.bg-rose-50 .text-black):not(.bg-rose-100 .text-black):not(.bg-orange-50 .text-black):not(.bg-orange-100 .text-black) { color: #f8fafc; }
+
+/* Correção agressiva para o painel admin: várias tabelas antigas usam
+ * `text-black`/`text-gray-*` diretamente em <td>/<th>. No tema escuro essas
+ * classes podem ficar ilegíveis. Aqui forçamos contraste apenas dentro de
+ * tabelas, preservando badges coloridos (eles têm classes próprias no span). */
+html.dark table th,
+html.dark table td {
+  color: #e5e7eb !important;
+}
+html.dark table th .text-black,
+html.dark table td .text-black,
+html.dark table th.text-black,
+html.dark table td.text-black {
+  color: #f8fafc !important;
+}
+html.dark table .text-gray-500,
+html.dark table .text-gray-600,
+html.dark table .text-gray-700,
+html.dark table .text-gray-800,
+html.dark table .text-gray-900 {
+  color: #e5e7eb !important;
+}
+html.dark table thead th {
+  color: #cbd5e1 !important;
+}
+
+/* Fundos absolutamente brancos viram tons de slate no dark */
+html.dark .bg-white:not(.print-only .bg-white):not(.bilhete-card .bg-white):not(.bg-white.bilhete-card) { background-color: #1f2937; }
+html.dark .bg-gray-50:not(.bilhete-card .bg-gray-50) { background-color: #0f172a; }
+html.dark .bg-gray-100:not(.bilhete-card .bg-gray-100) { background-color: #1e293b; }
+html.dark .bg-gray-200:not(.bilhete-card .bg-gray-200) { background-color: #334155; }
+html.dark .border-gray-100 { border-color: #334155; }
+html.dark .border-gray-200 { border-color: #475569; }
+html.dark .border-gray-300 { border-color: #64748b; }
+html.dark table tbody tr { color: #e5e7eb; }
+html.dark table thead { color: #cbd5e1; }
+
+/* Hover suaves em listas/tabelas no dark (não brigam com seleções coloridas) */
+html.dark .hover\:bg-gray-50:hover { background-color: #1e293b; }
+html.dark .hover\:bg-gray-100:hover { background-color: #334155; }
+html.dark .divide-gray-200 > * + * { border-color: #334155; }
+
+/* O CARD DO BILHETE (recibo) usa inline styles para garantir captura em PNG.
+ * Apenas reforçamos que o fundo é branco no dark mode (necessário para impressão/compartilhamento). */
+html.dark .bilhete-card { background-color: #ffffff !important; }
+html.dark .bilhete-card * { color: inherit; }
+
+@media print {
+  body { background: white !important; color: black !important; }
+  .no-print { display: none !important; }
+  .print-only { display: block !important; }
+}
+.print-only { display: none; }
+
+/* Estilo padrão para botões de marca (.btn-brand) — aplica cor configurada pela banca */
+.btn-brand {
+  background-color: var(--brand-primary);
+  color: var(--brand-primary-fg);
+}
+.btn-brand:hover {
+  background-color: var(--brand-primary-hover);
 }

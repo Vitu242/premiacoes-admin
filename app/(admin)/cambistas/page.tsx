@@ -5,13 +5,25 @@ import {
   getCambistasPorCodigo,
   getGerentesPorCodigo,
   getConfig,
+  getCotacaoEfetiva,
   addCambista,
   updateCambista,
   deleteCambista,
+  prestarContasCambista,
 } from "@/lib/store";
 import { addLog } from "@/lib/auditoria";
 import { getAdminCodigo } from "@/lib/auth";
+import { normalizeLoginKey } from "@/lib/login-normalize";
+import { useVisibilityRefresh } from "@/lib/use-config-refresh";
+import {
+  mapearAlertasCambistas,
+  type AnaliseCambista,
+  type SeveridadeAlerta,
+} from "@/lib/analise-cambistas";
 import type { Cambista } from "@/lib/types";
+import ImportarCambistasCsv from "@/app/components/ImportarCambistasCsv";
+import { exportarCsv } from "@/lib/export-csv";
+import { useToast } from "@/app/components/Toast";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -54,6 +66,7 @@ function cambistaInicial(gerenteId: string, codigo: string): Omit<Cambista, "id"
 }
 
 export default function CambistasPage() {
+  const toast = useToast();
   const codigo = getAdminCodigo();
   const [cambistas, setCambistasState] = useState<Cambista[]>([]);
   const gerentes = useMemo(() => getGerentesPorCodigo(codigo ?? ""), [codigo]);
@@ -69,8 +82,25 @@ export default function CambistasPage() {
     if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
   }, [codigo]);
 
+  // Re-puxa a lista quando o sync com Supabase completa ou o usuário volta à aba.
+  // Sem isso a tela ficaria “congelada” com dados antigos até o admin recarregar.
+  useVisibilityRefresh(() => {
+    if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
+  });
+
+  // Mapa de alertas de prejuízo (últimos 30 dias). Recarrega quando a lista de
+  // cambistas muda para refletir adições/remoções e novos bilhetes.
+  const alertas = useMemo<Map<string, AnaliseCambista>>(() => {
+    if (!codigo) return new Map();
+    try {
+      return mapearAlertasCambistas({ codigo, dias: 30, minBilhetes: 5 });
+    } catch {
+      return new Map();
+    }
+  }, [codigo, cambistas.length]);
+
   const filtrar = cambistas.filter((c) => {
-    const okNome = c.login.toLowerCase().includes(filtroNome.toLowerCase());
+    const okNome = normalizeLoginKey(c.login).includes(normalizeLoginKey(filtroNome));
     const okGerente = filtroGerente === "todos" || c.gerenteId === filtroGerente;
     const riscoNorm = (c.risco ?? "").toUpperCase().replace("É", "E");
     const filtroNorm = filtroRisco.toUpperCase().replace("É", "E");
@@ -99,9 +129,11 @@ export default function CambistasPage() {
       const gerenteCodigo = gerentes.find((g) => g.id === form.gerenteId)?.codigo ?? codigo ?? "default";
       addCambista({ ...form, codigo: gerenteCodigo });
       addLog("Criou cambista", form.login);
+      toast.success(`Cambista ${form.login} criado!`);
     } else if (editando) {
       updateCambista(editando.id, form);
       addLog("Atualizou cambista", form.login);
+      toast.success(`Cambista ${form.login} atualizado!`);
     }
     setCambistasState(getCambistasPorCodigo(codigo ?? ""));
     setEditando(null);
@@ -115,7 +147,60 @@ export default function CambistasPage() {
       addLog("Apagou cambista", c?.login ?? id);
       setCambistasState(getCambistasPorCodigo(codigo ?? ""));
       setEditando(null);
+      toast.success(`Cambista ${c?.login ?? "—"} apagado.`);
     }
+  };
+
+  /**
+   * Presta contas em massa: zera entrada/saída/comissão/lançamentos dos
+   * cambistas atualmente filtrados. Útil no fim do dia/turno para fechar
+   * tudo de uma vez. Apenas com confirmação explícita.
+   */
+  const prestarContasTodos = async () => {
+    if (filtrar.length === 0) {
+      toast.info("Nenhum cambista listado para prestar contas.");
+      return;
+    }
+    const ok = confirm(
+      `Prestar contas de ${filtrar.length} cambista(s) listado(s)?\n\n` +
+        "Isso vai zerar Entrada, Saídas, Comissão e Lançamentos de todos eles.\n" +
+        "Essa ação não pode ser desfeita.",
+    );
+    if (!ok) return;
+    for (const c of filtrar) await prestarContasCambista(c.id);
+    addLog("Prestou contas em massa", `${filtrar.length} cambista(s)`);
+    setCambistasState(getCambistasPorCodigo(codigo ?? ""));
+    toast.success(`Prestação de contas realizada para ${filtrar.length} cambista(s).`);
+  };
+
+  /**
+   * Apaga em massa todos os cambistas filtrados. Operação destrutiva —
+   * exige confirmação dupla, com nome dos primeiros para revisão.
+   */
+  const apagarTodos = () => {
+    if (filtrar.length === 0) {
+      toast.info("Nenhum cambista listado para apagar.");
+      return;
+    }
+    const exemplos = filtrar.slice(0, 5).map((c) => c.login).join(", ");
+    const sufixo = filtrar.length > 5 ? `, ...` : "";
+    if (
+      !confirm(
+        `APAGAR ${filtrar.length} cambista(s) listado(s)?\n\n` +
+          `Inclui: ${exemplos}${sufixo}\n\n` +
+          "Todas as apostas desses cambistas também serão apagadas.\n" +
+          "Essa ação não pode ser desfeita.",
+      )
+    )
+      return;
+    if (!confirm(`Tem certeza absoluta? Apagar ${filtrar.length} cambista(s)?`))
+      return;
+    const qtd = filtrar.length;
+    for (const c of filtrar) deleteCambista(c.id);
+    addLog("Apagou cambistas em massa", `${qtd} cambista(s)`);
+    setCambistasState(getCambistasPorCodigo(codigo ?? ""));
+    setEditando(null);
+    toast.success(`${qtd} cambista(s) apagado(s).`);
   };
 
   const getGerenteNome = (id: string) =>
@@ -170,10 +255,62 @@ export default function CambistasPage() {
         >
           Novo Cambista
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            const linhas = filtrar.map((c) => ({
+              login: c.login,
+              tipo: c.tipo ?? "cambista",
+              status: c.status,
+              saldo: c.saldo,
+              entrada: c.entrada,
+              saidas: c.saidas,
+              comissao: c.comissao,
+              lancamentos: c.lancamentos,
+              telefone: c.telefone,
+              endereco: c.endereco,
+              risco: c.risco,
+            }));
+            exportarCsv(`cambistas-${new Date().toISOString().slice(0, 10)}.csv`, linhas);
+          }}
+          className="w-full rounded border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 hover:bg-gray-50 sm:w-auto"
+        >
+          Exportar CSV
+        </button>
+        <button
+          type="button"
+          onClick={prestarContasTodos}
+          className="w-full rounded bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700 sm:w-auto"
+          title="Zera entrada/saída/comissão/lançamentos de todos os cambistas listados"
+        >
+          Prestar contas de todos
+        </button>
+        <button
+          type="button"
+          onClick={apagarTodos}
+          className="w-full rounded bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-700 sm:w-auto"
+          title="Apaga TODOS os cambistas listados (e suas apostas) — operação destrutiva"
+        >
+          Apagar todos listados
+        </button>
       </div>
 
-      <p className="mb-4 text-sm text-gray-600">
-        {filtrar.length} vendedor(es) encontrado(s)
+      <ImportarCambistasCsv
+        codigo={codigo ?? "default"}
+        gerenteIdPadrao={gerentes[0]?.id ?? ""}
+        onImportado={() => setCambistasState(getCambistasPorCodigo(codigo ?? ""))}
+      />
+
+      <p className="mb-4 mt-4 flex flex-wrap items-center gap-2 text-sm text-gray-600">
+        <span>{filtrar.length} vendedor(es) encontrado(s)</span>
+        {alertas.size > 0 && (
+          <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">
+            {alertas.size} em prejuízo (30d)
+          </span>
+        )}
+        <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
+          Comissão e cotação são individuais por cambista
+        </span>
       </p>
 
       <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow">
@@ -210,7 +347,12 @@ export default function CambistasPage() {
             {filtrar.map((c) => (
               <tr key={c.id} className="hover:bg-gray-50">
                 <td className="px-4 py-3 text-sm">
-                  <div className="font-medium text-gray-900">{c.login}</div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-medium text-gray-900">{c.login}</span>
+                    {alertas.get(c.id) ? (
+                      <AlertaBadge analise={alertas.get(c.id)!} />
+                    ) : null}
+                  </div>
                   <div className="text-xs text-gray-500">
                     Gerente: {getGerenteNome(c.gerenteId)}
                   </div>
@@ -221,8 +363,15 @@ export default function CambistasPage() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-xs text-gray-600">
-                  <div>M: {c.cotacaoM} / C: {c.cotacaoC} / D: {c.cotacaoD} / G: {c.cotacaoG}</div>
+                  <div>
+                    M: {getCotacaoEfetiva(c, "milhar")} / C: {getCotacaoEfetiva(c, "centena")} / D: {getCotacaoEfetiva(c, "dezena")} / G: {getCotacaoEfetiva(c, "grupo")}
+                  </div>
                   <div>M: {c.comissaoMilhar}% | C: {c.comissaoCentena}% | D: {c.comissaoDezena}% | G: {c.comissaoGrupo}%</div>
+                  {c.cotacoes && Object.keys(c.cotacoes).length > 0 && (
+                    <div className="mt-1 text-[11px] font-semibold text-blue-700">
+                      Cotações especiais configuradas
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <span className="rounded-full bg-red-100 px-2 py-1 text-xs text-red-700">
@@ -324,6 +473,11 @@ export default function CambistasPage() {
                   }
                   className="mt-1 w-full rounded border px-3 py-2"
                 />
+              </div>
+              <div className="rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                As comissões e cotações abaixo valem apenas para este cambista. Se o admin
+                configurar cotações especiais em <strong>Loterias &gt; Cotações</strong>, elas
+                sobrescrevem os valores principais deste cadastro.
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -515,5 +669,38 @@ export default function CambistasPage() {
         </div>
       )}
     </div>
+  );
+}
+
+const SEVER_BADGE: Record<SeveridadeAlerta, { label: string; classes: string }> = {
+  critico: {
+    label: "Prejuízo crítico",
+    classes: "bg-rose-100 text-rose-700 border-rose-300",
+  },
+  alto: {
+    label: "Prejuízo alto",
+    classes: "bg-orange-100 text-orange-700 border-orange-300",
+  },
+  medio: {
+    label: "Prejuízo médio",
+    classes: "bg-amber-100 text-amber-700 border-amber-300",
+  },
+  baixo: {
+    label: "Em prejuízo",
+    classes: "bg-slate-100 text-slate-700 border-slate-300",
+  },
+};
+
+function AlertaBadge({ analise }: { analise: AnaliseCambista }) {
+  const sev = SEVER_BADGE[analise.severidade];
+  const titulo = `${sev.label} · ${analise.lucro.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} (${analise.qtdBilhetes} bilhete(s) nos últimos 30 dias)`;
+  return (
+    <span
+      title={titulo}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${sev.classes}`}
+    >
+      <span className="text-[8px] leading-none">●</span>
+      {sev.label}
+    </span>
   );
 }

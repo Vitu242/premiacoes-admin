@@ -1,5 +1,15 @@
 "use client";
 
+/**
+ * Camada de autenticação do cliente.
+ *
+ * - Mantém compatibilidade com o uso antigo (`validarLogin`, `criarNovoAdmin`, etc.).
+ * - O caminho preferencial agora é o login server-side via /api/auth/admin/login,
+ *   que faz bcrypt + rate-limit. Use loginAdminServer() abaixo.
+ */
+
+import { normalizeLogin, normalizeLoginKey } from "./login-normalize";
+
 const CREDENCIAIS_KEY = "premiacoes_admin_credenciais";
 
 /** Código do chefe: só ele pode criar novos admins/códigos. Primeiro acesso: admin / admin */
@@ -27,26 +37,64 @@ function salvarCredenciais(creds: CredenciaisPorCodigo) {
   }
 }
 
+/** Login server-side (preferido). */
+export async function loginAdminServer(
+  codigo: string,
+  admin: string,
+  senha: string
+): Promise<{ ok: boolean; erro?: string }> {
+  try {
+    const r = await fetch("/api/auth/admin/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codigo, admin, senha }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, erro: j?.erro ?? "Falha ao entrar" };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, erro: (e as Error).message };
+  }
+}
+
+/** Login server-side do cliente (cambista) */
+export async function loginClienteServer(
+  codigo: string,
+  login: string,
+  senha: string
+): Promise<{ ok: boolean; erro?: string; cambistaId?: string; tipo?: "cambista" | "cliente" }> {
+  try {
+    const r = await fetch("/api/auth/cliente/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codigo, login, senha }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, erro: j?.erro ?? "Falha ao entrar" };
+    return { ok: true, cambistaId: j.cambistaId, tipo: j.tipo };
+  } catch (e) {
+    return { ok: false, erro: (e as Error).message };
+  }
+}
+
 /**
- * Valida login: só aceita credenciais registradas.
- * - Lotobrasil sem registro: apenas admin/admin (primeiro acesso).
- * - Qualquer outro código: precisa ter sido criado pelo chefe (já estar em credenciais).
+ * Login legado (offline / fallback) — usado por código antigo.
+ * Não use diretamente em UI nova: prefira loginAdminServer().
  */
 export function validarLogin(codigo: string, admin: string, senha: string): boolean {
   const creds = getCredenciais();
   const porCodigo = creds[codigo];
 
   if (codigo === CODIGO_CHEFE && !porCodigo) {
-    return admin === PRIMEIRO_ACCESS_LOGIN && senha === PRIMEIRO_ACCESS_SENHA;
+    return normalizeLoginKey(admin) === normalizeLoginKey(PRIMEIRO_ACCESS_LOGIN) && senha === PRIMEIRO_ACCESS_SENHA;
   }
   if (!porCodigo) return false;
-  return porCodigo.admin === admin && porCodigo.senha === senha;
+  return normalizeLoginKey(porCodigo.admin) === normalizeLoginKey(admin) && porCodigo.senha === senha;
 }
 
-/** Salva credenciais do primeiro acesso (Lotobrasil admin/admin ou quando chefe cria novo código). */
 export function salvarPrimeiroLogin(codigo: string, admin: string, senha: string) {
   const creds = getCredenciais();
-  creds[codigo] = { admin, senha };
+  creds[codigo] = { admin: normalizeLogin(admin), senha };
   salvarCredenciais(creds);
 }
 
@@ -54,7 +102,7 @@ export function atualizarAdminSenha(codigo: string, admin: string, senha: string
   const creds = getCredenciais();
   const atual = creds[codigo];
   creds[codigo] = {
-    admin,
+    admin: normalizeLogin(admin),
     senha: senha || (atual?.senha ?? ""),
   };
   salvarCredenciais(creds);
@@ -70,20 +118,18 @@ export function criarNovoAdmin(codigo: string, admin: string, senha: string): { 
   const creds = getCredenciais();
   if (creds[codigo]) return { ok: false, erro: "Este código já está em uso." };
   if (!codigo.trim()) return { ok: false, erro: "Informe o código." };
-  if (!admin.trim()) return { ok: false, erro: "Informe o login." };
+  if (!normalizeLogin(admin)) return { ok: false, erro: "Informe o login." };
   if (!senha || senha.length < 4) return { ok: false, erro: "A senha deve ter no mínimo 4 caracteres." };
-  creds[codigo.trim()] = { admin: admin.trim(), senha };
+  creds[codigo.trim()] = { admin: normalizeLogin(admin), senha };
   salvarCredenciais(creds);
   return { ok: true };
 }
 
-/** Lista códigos já registrados (para o chefe ver quais admins existem). */
 export function listarCodigosRegistrados(): { codigo: string; admin: string }[] {
   const creds = getCredenciais();
   return Object.entries(creds).map(([codigo, { admin }]) => ({ codigo, admin }));
 }
 
-/** Código da banca do admin logado (session). Usado para filtrar gerentes/cambistas. */
 export function getAdminCodigo(): string | null {
   if (typeof window === "undefined") return null;
   try {

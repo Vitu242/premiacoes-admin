@@ -10,8 +10,7 @@ import {
   getConfig,
   getResultadoByExtracaoData,
   getCotacaoEfetiva,
-  calcularComissaoBilhete,
-  calcularPremioPotencialBilhete,
+  getPremioMilharBrinde,
   cancelarBilheteAdmin,
   reconferirBilhetesComResultados,
   recalculateComissaoFromBilhetes,
@@ -21,44 +20,41 @@ import { getAdminCodigo, CODIGO_CHEFE } from "@/lib/auth";
 import { COTACOES_LABELS } from "@/lib/cotacoes";
 import { initFromSupabase, useSupabase } from "@/lib/sync-supabase";
 import { addLog } from "@/lib/auditoria";
+import { hojeIsoDate, isSameIsoInputDate, formatarDataHoraBr, parseDataPtBrOuIso } from "@/lib/date-utils";
+import { compararBilheteRecentePrimeiro } from "@/lib/list-order";
+import BilheteDetalhado from "@/app/components/BilheteDetalhado";
+import { useBranding } from "@/app/components/BrandingProvider";
+import type { Bilhete } from "@/lib/types";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-
-function parseDataBrasil(dataStr: string): Date | null {
-  const m = dataStr.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-  if (!m) return null;
-  const [, d, M, y] = m;
-  const ano = (y ?? "").length === 2 ? `20${y}` : y;
-  const dia = String(d ?? "").padStart(2, "0");
-  const mes = String(M ?? "").padStart(2, "0");
-  const iso = `${ano}-${mes}-${dia}T00:00:00`;
-  const dt = new Date(iso);
-  return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
 const MODALIDADES: Record<string, string> = { ...COTACOES_LABELS };
 
 export default function BilhetesAdminPage() {
   const codigo = getAdminCodigo();
+  const { branding } = useBranding();
   const [bilhetes, setBilhetes] = useState(getBilhetes());
   const [filtroGerente, setFiltroGerente] = useState("todos");
   const [filtroCambista, setFiltroCambista] = useState("todos");
   const [filtroSituacao, setFiltroSituacao] = useState("todos");
   const [filtroExtracao, setFiltroExtracao] = useState("todos");
-  const [filtroData, setFiltroData] = useState("");
+  const [filtroData, setFiltroData] = useState<string>(() => hojeIsoDate());
   const [filtroCodigo, setFiltroCodigo] = useState("");
   const [ordenacao, setOrdenacao] = useState<
     "data_desc" | "data_asc" | "valor_desc" | "valor_asc" | "premio_desc" | "premio_asc"
   >("data_desc");
-  const [detalheBilhete, setDetalheBilhete] = useState<(typeof bilhetesDoCodigo)[0] | null>(null);
+  const [detalheBilhete, setDetalheBilhete] = useState<Bilhete | null>(null);
+  const [cancelandoId, setCancelandoId] = useState<string | null>(null);
+  const [sincronizando, setSincronizando] = useState(false);
 
   const cambistas = getCambistasPorCodigo(codigo ?? "");
   const gerentes = getGerentesPorCodigo(codigo ?? "");
   const extracoes = getExtracoes();
   const todosCambistas = getCambistas();
   const cfg = getConfig();
+  const bancaNome = branding.displayName || (codigo ? `${codigo} Premiações` : "Premiações");
   const podeCancelarAdmin = cfg.gerentePodeCancelarAposta !== false || (codigo?.trim().toLowerCase() === CODIGO_CHEFE.toLowerCase());
   const usarFallback = cambistas.length === 0 && codigo && codigo.trim().toLowerCase() === CODIGO_CHEFE.toLowerCase();
   const cambistasParaFiltro = usarFallback
@@ -70,12 +66,18 @@ export default function BilhetesAdminPage() {
   const refreshBilhetes = () => setBilhetes(getBilhetes());
 
   const handleSincronizar = async () => {
-    if (useSupabase) {
-      await initFromSupabase();
-      reconferirBilhetesComResultados();
-      recalculateComissaoFromBilhetes();
+    if (sincronizando) return;
+    setSincronizando(true);
+    try {
+      if (useSupabase) {
+        await initFromSupabase();
+        reconferirBilhetesComResultados();
+        recalculateComissaoFromBilhetes();
+      }
+      refreshBilhetes();
+    } finally {
+      setSincronizando(false);
     }
-    refreshBilhetes();
   };
 
   useEffect(() => {
@@ -90,9 +92,7 @@ export default function BilhetesAdminPage() {
     if (filtroSituacao !== "todos" && b.situacao !== filtroSituacao) return false;
     if (filtroExtracao !== "todos" && b.extracaoId !== filtroExtracao) return false;
     if (filtroData) {
-      const [y, m, d] = filtroData.split("-");
-      const busca = `${d}/${m}/${y.slice(2)}`;
-      if (!b.data.includes(busca)) return false;
+      if (!isSameIsoInputDate(b.data, filtroData)) return false;
     }
     if (filtroCodigo.trim() && !b.codigo.includes(filtroCodigo.trim())) return false;
     return true;
@@ -100,12 +100,33 @@ export default function BilhetesAdminPage() {
 
   const getCambistaNome = (id: string) => cambistasParaFiltro.find((c) => c.id === id)?.login ?? "-";
 
-  const handleCancelarAdmin = (b: (typeof filtrar)[0]) => {
-    if (b.situacao === "cancelado") return;
+  const getValorPremioReal = (b: Bilhete): number => {
+    if (b.situacao === "cancelado") return 0;
+    const cam = cambistasParaFiltro.find((c) => c.id === b.cambistaId);
+    if (!cam) return 0;
+    const resultado = getResultadoByExtracaoData(b.extracaoId, b.data);
+    const conf = conferirBilhete(b, resultado, cam, getCotacaoEfetiva, getPremioMilharBrinde());
+    return conf.vencedor ? conf.valorGanho : 0;
+  };
+
+  const handleCancelarAdmin = async (b: (typeof filtrar)[0]) => {
+    if (cancelandoId === b.id || b.situacao === "cancelado") return;
     if (!confirm(`Cancelar o bilhete ${b.codigo}? O admin pode cancelar a qualquer momento.`)) return;
-    if (cancelarBilheteAdmin(b.id)) {
-      addLog("Cancelou bilhete", `Código ${b.codigo} (${formatarMoeda(b.total)})`);
-      refreshBilhetes();
+    setCancelandoId(b.id);
+    try {
+      const ok = await cancelarBilheteAdmin(b.id);
+      if (ok) {
+        addLog("Cancelou bilhete", `Código ${b.codigo} (${formatarMoeda(b.total)})`);
+        refreshBilhetes();
+        // Fecha o modal só após confirmação de sucesso.
+        setDetalheBilhete((atual) => (atual?.id === b.id ? null : atual));
+      } else {
+        alert("Não foi possível cancelar o bilhete (pode já estar cancelado).");
+      }
+    } catch (e) {
+      alert(`Erro ao cancelar: ${(e as Error).message}`);
+    } finally {
+      setCancelandoId(null);
     }
   };
 
@@ -160,7 +181,17 @@ export default function BilhetesAdminPage() {
           value={filtroData}
           onChange={(e) => setFiltroData(e.target.value)}
           className="rounded border border-gray-300 px-3 py-2 text-sm text-black"
+          title="Filtra bilhetes pela data selecionada"
         />
+        {filtroData && (
+          <button
+            type="button"
+            onClick={() => setFiltroData("")}
+            className="rounded border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Ver todos
+          </button>
+        )}
         <input
           type="text"
           placeholder="Nº Bilhete"
@@ -202,9 +233,10 @@ export default function BilhetesAdminPage() {
           <button
             type="button"
             onClick={() => void handleSincronizar()}
-            className="rounded bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600"
+            disabled={sincronizando}
+            className="rounded bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600 disabled:opacity-60"
           >
-            Sincronizar
+            {sincronizando ? "Sincronizando…" : "Sincronizar"}
           </button>
         )}
       </div>
@@ -244,30 +276,31 @@ export default function BilhetesAdminPage() {
                   if (ordenacao === "valor_desc") return b.total - a.total;
                   if (ordenacao === "valor_asc") return a.total - b.total;
                   if (ordenacao === "premio_desc" || ordenacao === "premio_asc") {
-                    const camA = cambistasParaFiltro.find((c) => c.id === a.cambistaId);
-                    const camB = cambistasParaFiltro.find((c) => c.id === b.cambistaId);
-                    const premioA = camA ? calcularPremioPotencialBilhete(a, camA) : 0;
-                    const premioB = camB ? calcularPremioPotencialBilhete(b, camB) : 0;
+                    const premioA = getValorPremioReal(a);
+                    const premioB = getValorPremioReal(b);
                     return ordenacao === "premio_desc" ? premioB - premioA : premioA - premioB;
                   }
-                  const da = parseDataBrasil(a.data)?.getTime() ?? 0;
-                  const db = parseDataBrasil(b.data)?.getTime() ?? 0;
-                  if (ordenacao === "data_asc") return da - db;
-                  return db - da;
+                  if (ordenacao === "data_desc") return compararBilheteRecentePrimeiro(a, b);
+                  if (ordenacao === "data_asc") {
+                    const da = parseDataPtBrOuIso(a.data)?.getTime() ?? 0;
+                    const db = parseDataPtBrOuIso(b.data)?.getTime() ?? 0;
+                    if (da !== db) return da - db;
+                    return Number(a.id) - Number(b.id);
+                  }
+                  return compararBilheteRecentePrimeiro(a, b);
                 })
                 .map((b) => {
-                const cam = cambistasParaFiltro.find((c) => c.id === b.cambistaId);
-                const comissao = cam ? calcularComissaoBilhete(b, cam) : 0;
+                const premioReal = getValorPremioReal(b);
                 const jogo = b.itens.map((i) => `${MODALIDADES[i.modalidade] || i.modalidade} ${i.numeros}${i.milharBrinde ? ` + Brinde ${i.milharBrinde}` : ""}`).join(" | ");
                 return (
                   <tr key={b.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 font-mono text-sm font-medium text-black">{b.codigo}</td>
                     <td className="px-4 py-3 text-sm text-black">{getCambistaNome(b.cambistaId)}</td>
                     <td className="px-4 py-3 text-sm text-black">{b.extracaoNome}</td>
-                    <td className="px-4 py-3 text-sm text-black">{b.data.replace(",", " ")}</td>
+                    <td className="px-4 py-3 text-sm text-black">{formatarDataHoraBr(b.data)}</td>
                     <td className="max-w-[200px] truncate px-4 py-3 text-xs text-black" title={jogo}>{jogo}</td>
                     <td className="px-4 py-3 text-right text-sm font-medium text-black">{formatarMoeda(b.total)}</td>
-                    <td className="px-4 py-3 text-right text-sm font-medium text-black">{formatarMoeda(cam ? calcularPremioPotencialBilhete(b, cam) : 0)}</td>
+                    <td className="px-4 py-3 text-right text-sm font-medium text-black">{formatarMoeda(premioReal)}</td>
                     <td className="px-4 py-3">
                       <span
                         className={`rounded-full px-2 py-1 text-xs font-medium ${
@@ -293,9 +326,10 @@ export default function BilhetesAdminPage() {
                           <button
                             type="button"
                             onClick={() => handleCancelarAdmin(b)}
-                            className="rounded bg-red-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600"
+                            disabled={cancelandoId === b.id}
+                            className="rounded bg-red-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600 disabled:opacity-60"
                           >
-                            Cancelar
+                            {cancelandoId === b.id ? "..." : "Cancelar"}
                           </button>
                         )}
                       </div>
@@ -313,23 +347,22 @@ export default function BilhetesAdminPage() {
         const b = detalheBilhete;
         const cam = cambistasParaFiltro.find((c) => c.id === b.cambistaId);
         const resultado = getResultadoByExtracaoData(b.extracaoId, b.data);
-        const conf = cam ? conferirBilhete(b, resultado, cam, getCotacaoEfetiva) : { vencedor: false, valorGanho: 0, itens: [] };
-        const jogo = b.itens.map((i) => `${MODALIDADES[i.modalidade] || i.modalidade} ${i.numeros}${i.milharBrinde ? ` + Brinde ${i.milharBrinde}` : ""}`).join(" | ");
+        const conf = cam ? conferirBilhete(b, resultado, cam, getCotacaoEfetiva, getPremioMilharBrinde()) : { vencedor: false, valorGanho: 0, itens: [] };
         return (
           <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:items-center"
             onClick={() => setDetalheBilhete(null)}
           >
             <div
-              className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-6 shadow-xl"
+              className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-slate-100 p-3 shadow-2xl sm:p-4"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-xl font-bold text-gray-800">Bilhete {b.codigo}</h2>
+              <div className="mb-3 flex items-center justify-between px-1">
+                <h2 className="text-base font-bold text-slate-800">Visualização do bilhete</h2>
                 <button
                   type="button"
                   onClick={() => setDetalheBilhete(null)}
-                  className="rounded p-2 text-gray-500 hover:bg-gray-100"
+                  className="rounded-full p-2 text-slate-500 hover:bg-white"
                   aria-label="Fechar"
                 >
                   <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -337,43 +370,63 @@ export default function BilhetesAdminPage() {
                   </svg>
                 </button>
               </div>
-              <div className="space-y-2 text-sm text-gray-700">
-                <p><strong>Cambista:</strong> {getCambistaNome(b.cambistaId)}</p>
-                <p><strong>Data:</strong> {b.data.replace(",", " ")}</p>
-                <p><strong>Extração:</strong> {b.extracaoNome}</p>
-                <p><strong>Valor aposta:</strong> {formatarMoeda(b.total)}</p>
-                <p><strong>Prêmio potencial:</strong> {formatarMoeda(cam ? calcularPremioPotencialBilhete(b, cam) : 0)}</p>
-                <p><strong>Situação:</strong> {b.situacao}</p>
+
+              <BilheteDetalhado
+                bilhete={b}
+                bancaNome={bancaNome}
+                cambistaNome={getCambistaNome(b.cambistaId)}
+                cotacaoPara={(mod) => (cam ? getCotacaoEfetiva(cam, mod as never) : 0)}
+                rodapeTexto={branding.bilheteRodape || cfg.textoRodapeBilhete || undefined}
+                logoUrl={branding.logoUrl ?? null}
+              />
+
+              <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
+                <p className="mb-2 text-sm font-semibold text-slate-800">Conferência do admin</p>
+                {resultado ? (
+                  <>
+                    <p className={`text-base font-bold ${conf.vencedor ? "text-emerald-700" : "text-slate-600"}`}>
+                      {conf.vencedor ? `Vencedor — ${formatarMoeda(conf.valorGanho)}` : "Sem prêmio nesta extração"}
+                    </p>
+                    {conf.itens.some((x) => x.bateu) && (
+                      <ul className="mt-1 list-inside list-disc text-xs text-slate-600">
+                        {conf.itens.filter((x) => x.bateu).map((x, i) => (
+                          <li key={i}>
+                            {x.brindeBateu
+                              ? `Milhar Brinde ${x.item.milharBrinde}: ${formatarMoeda(x.brindeValorGanho ?? x.valorGanho)}`
+                              : `${MODALIDADES[x.item.modalidade] || x.item.modalidade} ${x.item.numeros}: ${formatarMoeda(x.valorGanho)}`}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-500">Aguardando resultado da extração.</p>
+                )}
               </div>
-              <div className="mt-4 border-t border-gray-200 pt-4">
-                <p className="mb-2 font-medium text-gray-800">Jogos</p>
-                <p className="text-sm text-gray-600">{jogo}</p>
+
+              <div className="mt-3 flex justify-end gap-2">
+                {b.situacao !== "cancelado" && podeCancelarAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Não fechar antes do cancelamento confirmar — o handler
+                      // fecha o modal sozinho em caso de sucesso.
+                      void handleCancelarAdmin(b);
+                    }}
+                    disabled={cancelandoId === b.id}
+                    className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60"
+                  >
+                    {cancelandoId === b.id ? "Cancelando…" : "Cancelar bilhete"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setDetalheBilhete(null)}
+                  className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                >
+                  Fechar
+                </button>
               </div>
-              {b.itens.length > 0 && (
-                <ul className="mt-2 list-inside list-disc text-sm text-gray-600">
-                  {b.itens.map((item, i) => (
-                    <li key={i}>
-                      {MODALIDADES[item.modalidade] || item.modalidade} {item.numeros} | {item.premio || "1/1"} — {formatarMoeda(item.valor)}
-                      {item.milharBrinde && ` + Brinde ${item.milharBrinde}`}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {resultado && (
-                <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
-                  <p className="mb-2 font-medium text-gray-800">Conferência</p>
-                  <p className={`font-bold ${conf.vencedor ? "text-green-700" : "text-gray-700"}`}>
-                    {conf.vencedor ? `Vencedor ${formatarMoeda(conf.valorGanho)}` : "Perdedor"}
-                  </p>
-                  {conf.itens.some((x) => x.bateu) && (
-                    <ul className="mt-1 list-inside list-disc text-xs text-gray-600">
-                      {conf.itens.filter((x) => x.bateu).map((x, i) => (
-                        <li key={i}>{MODALIDADES[x.item.modalidade]} {x.item.numeros}: {formatarMoeda(x.valorGanho)}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         );

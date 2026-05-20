@@ -1,23 +1,32 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSupabase, initFromSupabase } from "@/lib/sync-supabase";
-import { reconferirBilhetesComResultados, recalculateComissaoFromBilhetes } from "@/lib/store";
 import { SYNC_COMPLETE_EVENT } from "@/lib/use-config-refresh";
+import { startRealtime } from "@/lib/realtime";
+import { startSyncQueueLoop, flushSyncQueue } from "@/lib/sync-queue";
 
 const SYNC_TIMEOUT_MS = 8000;
+const REALTIME_DEBOUNCE_MS = 800;
 
-async function syncFromSupabase() {
+async function syncFromSupabase(): Promise<void> {
+  // Tenta esvaziar a fila offline-first ANTES de ler o canônico do servidor.
+  // Sem isso, um registro criado/atualizado offline poderia ser removido por
+  // engano quando o init considerar o Supabase como fonte da verdade.
+  try { await flushSyncQueue(); } catch {}
   await initFromSupabase();
-  reconferirBilhetesComResultados();
-  recalculateComissaoFromBilhetes();
-  window.dispatchEvent(new CustomEvent(SYNC_COMPLETE_EVENT));
+  // Não recalcula caixa/bilhetes automaticamente no F5 — isso fazia prestação de contas
+  // e cancelamentos "voltarem". Use os botões em Prestar Contas / Bilhetes se precisar.
+  try { window.dispatchEvent(new CustomEvent(SYNC_COMPLETE_EVENT)); } catch {}
 }
 
 export function SupabaseSyncProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(!useSupabase);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    // Inicia o loop de reenvio offline → online sempre, mesmo sem realtime ativo
+    startSyncQueueLoop();
     if (!useSupabase) {
       setReady(true);
       return;
@@ -33,23 +42,41 @@ export function SupabaseSyncProvider({ children }: { children: React.ReactNode }
     return () => { cancelled = true; clearTimeout(timeout); };
   }, []);
 
+  // Re-sync ao voltar para a aba
   useEffect(() => {
     if (!useSupabase) return;
-    const handleVisibility = () => {
+    const onVis = () => {
       if (document.visibilityState === "visible") {
         syncFromSupabase().catch(() => {});
       }
     };
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => document.removeEventListener("visibilitychange", handleVisibility);
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
+  // Realtime: debouce para evitar re-sync excessivo
+  useEffect(() => {
+    if (!useSupabase) return;
+    const stop = startRealtime(() => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        syncFromSupabase().catch(() => {});
+      }, REALTIME_DEBOUNCE_MS);
+    });
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      stop?.();
+    };
   }, []);
 
   if (!ready) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-slate-900">
         <div className="text-center">
-          <p className="text-gray-600">Sincronizando dados...</p>
-          <p className="mt-2 text-sm text-gray-400">Se demorar, a página abrirá em instantes.</p>
+          <p className="text-gray-600 dark:text-slate-300">Sincronizando dados...</p>
+          <p className="mt-2 text-sm text-gray-400 dark:text-slate-500">
+            Se demorar, a página abrirá em instantes.
+          </p>
         </div>
       </div>
     );

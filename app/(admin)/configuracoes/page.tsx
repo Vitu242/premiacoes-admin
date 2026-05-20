@@ -1,44 +1,40 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { atualizarAdminSenha } from "@/lib/auth";
-import { getConfig, setConfig, verificarCambistasInativos, getCambistasPorCodigo, getExtracoes, updateExtracao } from "@/lib/store";
+import { getConfig, setConfig, verificarCambistasInativos, getCambistasPorCodigo } from "@/lib/store";
 import { addLog } from "@/lib/auditoria";
 import { useVisibilityRefresh } from "@/lib/use-config-refresh";
+import { normalizeLogin } from "@/lib/login-normalize";
 import type { MilharBrindeGlobal } from "@/lib/store";
+import { useToast } from "@/app/components/Toast";
 
 export default function ConfiguracoesPage() {
+  const toast = useToast();
   const [codigo, setCodigo] = useState("");
-  const [adminAtual, setAdminAtual] = useState("");
   const [novoAdmin, setNovoAdmin] = useState("");
   const [novaSenha, setNovaSenha] = useState("");
   const [confirmarSenha, setConfirmarSenha] = useState("");
   const [tempoCancelamento, setTempoCancelamento] = useState(5);
-  const [premioMax, setPremioMax] = useState<5 | 10>(10);
   const [apostasAtivas, setApostasAtivas] = useState(true);
   const [textoBilhete, setTextoBilhete] = useState("");
   const [tempoSegundaVia, setTempoSegundaVia] = useState(60);
   const [diasExcluirInativo, setDiasExcluirInativo] = useState(0);
   const [baixaAutomatica, setBaixaAutomatica] = useState(false);
-  const [milharBrindeTipo, setMilharBrindeTipo] = useState<"nao" | "valor_fixo" | "valor_multiplicado">("valor_multiplicado");
-  const [milharBrindeValorMin, setMilharBrindeValorMin] = useState(0);
+  const [milharBrindeTipo, setMilharBrindeTipo] = useState<"nao" | "valor_fixo">("valor_fixo");
   const [milharBrindePremioFixo, setMilharBrindePremioFixo] = useState(0);
   const [gerentePodeCancelar, setGerentePodeCancelar] = useState(true);
-  const [mensagem, setMensagem] = useState<{ tipo: "sucesso" | "erro"; texto: string } | null>(null);
-  const [extracoesKey, setExtracoesKey] = useState(0);
 
   const carregarConfig = () => {
     const config = getConfig();
     setTempoCancelamento(config.tempoCancelamentoMinutos);
-    setPremioMax(config.premioMax ?? 10);
     setApostasAtivas(config.apostasAtivas ?? true);
     setTextoBilhete(config.textoRodapeBilhete ?? "");
     setTempoSegundaVia(config.tempoSegundaViaMinutos ?? 60);
     setDiasExcluirInativo(config.diasExcluirCambistaInativo ?? 0);
     setBaixaAutomatica(config.baixaAutomatica ?? false);
     const mb = config.milharBrindeGlobal;
-    setMilharBrindeTipo(mb?.tipo ?? "valor_multiplicado");
-    setMilharBrindeValorMin(mb?.valorMinimoAtivar ?? 0);
+    setMilharBrindeTipo(mb?.tipo === "nao" ? "nao" : "valor_fixo");
     setMilharBrindePremioFixo(mb?.premioFixo ?? 0);
     setGerentePodeCancelar(config.gerentePodeCancelarAposta ?? true);
   };
@@ -49,7 +45,6 @@ export default function ConfiguracoesPage() {
       if (auth) {
         const { codigo: c, admin } = JSON.parse(auth);
         setCodigo(c);
-        setAdminAtual(admin);
         setNovoAdmin(admin);
       }
       carregarConfig();
@@ -60,36 +55,34 @@ export default function ConfiguracoesPage() {
 
   const handleSalvarLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    setMensagem(null);
 
-    if (!novoAdmin.trim()) {
-      setMensagem({ tipo: "erro", texto: "Informe o novo login." });
+    const adminNormalizado = normalizeLogin(novoAdmin);
+    if (!adminNormalizado) {
+      toast.error("Informe o novo login.");
       return;
     }
 
     if (novaSenha) {
       if (novaSenha.length < 4) {
-        setMensagem({ tipo: "erro", texto: "A senha deve ter no mínimo 4 caracteres." });
+        toast.error("A senha deve ter no mínimo 4 caracteres.");
         return;
       }
       if (novaSenha !== confirmarSenha) {
-        setMensagem({ tipo: "erro", texto: "As senhas não coincidem." });
+        toast.error("As senhas não coincidem.");
         return;
       }
     }
 
     const senhaFinal = novaSenha || undefined;
-    atualizarAdminSenha(codigo, novoAdmin, senhaFinal ?? "");
-    addLog("Alterou login/senha", `Admin: ${novoAdmin}`);
+    atualizarAdminSenha(codigo, adminNormalizado, senhaFinal ?? "");
+    addLog("Alterou login/senha", `Admin: ${adminNormalizado}`);
 
-    // Atualiza a sessão se mudou o login
-    localStorage.setItem("premiacoes_admin", JSON.stringify({ codigo, admin: novoAdmin }));
-    setAdminAtual(novoAdmin);
-    setNovoAdmin(novoAdmin);
+    localStorage.setItem("premiacoes_admin", JSON.stringify({ codigo, admin: adminNormalizado }));
+    setNovoAdmin(adminNormalizado);
     setNovaSenha("");
     setConfirmarSenha("");
 
-    setMensagem({ tipo: "sucesso", texto: "Login e senha atualizados com sucesso!" });
+    toast.success("Login e senha atualizados!");
   };
 
   const handleSalvarTempoCancelamento = () => {
@@ -97,33 +90,22 @@ export default function ConfiguracoesPage() {
     setConfig({ tempoCancelamentoMinutos: n });
     setTempoCancelamento(n);
     addLog("Configuração", `Tempo cancelar: ${n} min`);
-    setMensagem({ tipo: "sucesso", texto: "Tempo para cancelar bilhete atualizado!" });
-  };
-
-  const handleSalvarPremioMax = () => {
-    setConfig({ premioMax });
-    addLog("Configuração", `Prêmio max: até 1/${premioMax}`);
-    setMensagem({ tipo: "sucesso", texto: "Prêmios permitidos ao cliente atualizado!" });
+    carregarConfig();
+    toast.success(`Tempo para cancelar bilhete: ${n} min`);
   };
 
   const handleSalvarApostasAtivas = () => {
     setConfig({ apostasAtivas });
     addLog("Configuração", apostasAtivas ? "Apostas ativadas" : "Apostas desativadas");
-    setMensagem({
-      tipo: "sucesso",
-      texto: apostasAtivas
-        ? "Apostas ativadas para os clientes."
-        : "Apostas desativadas para os clientes.",
-    });
+    carregarConfig();
+    toast.success(apostasAtivas ? "Apostas ativadas." : "Apostas desativadas.");
   };
 
   const handleSalvarTextoBilhete = () => {
     setConfig({ textoRodapeBilhete: textoBilhete });
     addLog("Configuração", "Texto do bilhete alterado");
-    setMensagem({
-      tipo: "sucesso",
-      texto: "Texto do bilhete atualizado!",
-    });
+    carregarConfig();
+    toast.success("Texto do bilhete atualizado!");
   };
 
   const qtdCambistas = codigo ? getCambistasPorCodigo(codigo).length : 0;
@@ -137,41 +119,6 @@ export default function ConfiguracoesPage() {
         <p className="text-xl font-bold text-gray-800">{qtdCambistas}</p>
       </div>
 
-      <div className="mb-8 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-        <h2 className="mb-4 text-lg font-semibold text-gray-800">Loterias ativas</h2>
-        <p className="mb-4 text-sm text-gray-500">Ative ou desative extrações para apostas.</p>
-        <div className="space-y-2">
-          {getExtracoes().map((e) => (
-            <div key={e.id} className="flex items-center justify-between rounded border border-gray-100 px-4 py-2">
-              <span className="font-medium text-gray-800">{e.nome}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  updateExtracao(e.id, { ativa: !e.ativa });
-                  addLog("Configuração", `${e.nome}: ${e.ativa ? "desativada" : "ativada"}`);
-                  setExtracoesKey((k) => k + 1);
-                }}
-                className={`rounded px-3 py-1 text-sm font-medium ${
-                  e.ativa ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                }`}
-              >
-                {e.ativa ? "Ativa" : "Inativa"}
-              </button>
-            </div>
-          ))}
-          {getExtracoes().length === 0 && <p className="text-sm text-gray-500">Nenhuma extração cadastrada.</p>}
-        </div>
-      </div>
-
-      {mensagem && (
-        <p
-          className={`mb-4 rounded p-2 text-sm ${
-            mensagem.tipo === "sucesso" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
-          }`}
-        >
-          {mensagem.texto}
-        </p>
-      )}
 
       {/* Alterar login e senha do admin */}
       <div className="mb-8 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
@@ -244,42 +191,6 @@ export default function ConfiguracoesPage() {
         </form>
       </div>
 
-      {/* Tempo para cancelar bilhete */}
-      <div className="mb-8 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-        <h2 className="mb-4 text-lg font-semibold text-gray-800">
-          Prêmios permitidos ao cliente
-        </h2>
-        <p className="mb-4 text-sm text-gray-500">
-          Define até qual prêmio o cliente pode apostar. Ex.: &quot;Até 1/5&quot; = só jogos de 1/1 a 5/5; &quot;Até 1/10&quot; = de 1/1 até 5/10.
-        </p>
-        <div className="flex flex-wrap items-center gap-4">
-          <label className="flex items-center gap-2">
-            <input
-              type="radio"
-              name="premioMax"
-              checked={premioMax === 5}
-              onChange={() => setPremioMax(5)}
-            />
-            Até 1/5 (só 1º ao 5º prêmio)
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="radio"
-              name="premioMax"
-              checked={premioMax === 10}
-              onChange={() => setPremioMax(10)}
-            />
-            Até 1/10 (1º ao 10º prêmio)
-          </label>
-          <button
-            onClick={handleSalvarPremioMax}
-            className="rounded bg-orange-500 px-4 py-2 font-medium text-white hover:bg-orange-600"
-          >
-            Salvar
-          </button>
-        </div>
-      </div>
-
       <div className="mb-8 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <h2 className="mb-4 text-lg font-semibold text-gray-800">
           Tempo para cancelar bilhete (cliente)
@@ -346,19 +257,24 @@ export default function ConfiguracoesPage() {
 
       {/* Texto do bilhete */}
       <div className="mb-8 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-        <h2 className="mb-4 text-lg font-semibold text-gray-800">
+        <h2 className="mb-2 text-lg font-semibold text-gray-800">
           Texto ao final do bilhete
         </h2>
-        <p className="mb-4 text-sm text-gray-500">
-          Mensagem exibida no rodapé do bilhete do cliente (ex.: aviso de conferência e responsabilidade).
+        <p className="mb-3 text-sm text-gray-500">
+          Mensagem exibida na faixa amarela do rodapé do bilhete (aparece tanto na tela quanto na imagem
+          que o cliente compartilha pelo WhatsApp). O nome da banca é adicionado automaticamente depois.
         </p>
         <div className="space-y-3">
           <textarea
             value={textoBilhete}
             onChange={(e) => setTextoBilhete(e.target.value)}
             rows={3}
+            placeholder="Confira seu bilhete, a banca não se responsabiliza por qualquer erro do cambista."
             className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
           />
+          <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+            <strong>Pré-visualização:</strong> &quot;{(textoBilhete || "Confira seu bilhete, a banca não se responsabiliza por qualquer erro do cambista.")}&quot; <strong>{(typeof window !== "undefined" && (localStorage.getItem("premiacoes_branding") ? (JSON.parse(localStorage.getItem("premiacoes_branding") || "{}").displayName || "Sua banca") : "Sua banca"))}</strong> agradece a sua preferência, boa sorte e ótimos resultados!
+          </div>
           <button
             onClick={handleSalvarTextoBilhete}
             className="rounded bg-orange-500 px-4 py-2 font-medium text-white hover:bg-orange-600"
@@ -392,7 +308,8 @@ export default function ConfiguracoesPage() {
             onClick={() => {
               setConfig({ tempoSegundaViaMinutos: tempoSegundaVia });
               addLog("Configuração", `Tempo 2ª via: ${tempoSegundaVia} min`);
-              setMensagem({ tipo: "sucesso", texto: "Tempo para segunda via atualizado!" });
+              carregarConfig();
+              toast.success(`Tempo para 2ª via: ${tempoSegundaVia} min`);
             }}
             className="rounded bg-orange-500 px-4 py-2 font-medium text-white hover:bg-orange-600"
           >
@@ -425,7 +342,8 @@ export default function ConfiguracoesPage() {
             onClick={() => {
               setConfig({ diasExcluirCambistaInativo: diasExcluirInativo });
               addLog("Configuração", `Dias excluir inativo: ${diasExcluirInativo}`);
-              setMensagem({ tipo: "sucesso", texto: "Configuração atualizada!" });
+              carregarConfig();
+              toast.success(`Inativação automática: ${diasExcluirInativo} dia(s)`);
             }}
             className="rounded bg-orange-500 px-4 py-2 font-medium text-white hover:bg-orange-600"
           >
@@ -435,10 +353,8 @@ export default function ConfiguracoesPage() {
             onClick={() => {
               const n = verificarCambistasInativos();
               addLog("Sistema", `Verificou inativos: ${n} inativado(s)`);
-              setMensagem({
-                tipo: "sucesso",
-                texto: n > 0 ? `${n} cambista(s) inativado(s) por inatividade.` : "Nenhum cambista inativo encontrado.",
-              });
+              if (n > 0) toast.success(`${n} cambista(s) inativado(s) por inatividade.`);
+              else toast.info("Nenhum cambista inativo encontrado.");
             }}
             className="rounded border border-gray-300 px-4 py-2 font-medium text-gray-700 hover:bg-gray-50"
           >
@@ -468,7 +384,8 @@ export default function ConfiguracoesPage() {
             onClick={() => {
               setConfig({ baixaAutomatica });
               addLog("Configuração", baixaAutomatica ? "Baixa automática ativada" : "Baixa automática desativada");
-              setMensagem({ tipo: "sucesso", texto: "Baixa automática atualizada!" });
+              carregarConfig();
+              toast.success(baixaAutomatica ? "Baixa automática ativada." : "Baixa automática desativada.");
             }}
             className="rounded bg-orange-500 px-4 py-2 font-medium text-white hover:bg-orange-600"
           >
@@ -483,11 +400,13 @@ export default function ConfiguracoesPage() {
           Milhar Brinde (configuração global)
         </h2>
         <p className="mb-4 text-sm text-gray-500">
-          Define o comportamento do Milhar Brinde para todos os cambistas. Sobrescreve a opção individual quando definido.
+          Define o comportamento do Milhar Brinde para todos os cambistas. Quando ativado,
+          ele paga somente se bater no 1º prêmio (1/1), e o valor pago é fixo, definido
+          pelo admin, independente do valor apostado no bilhete.
         </p>
         <div className="space-y-4">
           <div>
-            <label className="mb-2 block text-sm font-medium text-gray-600">Tipo</label>
+            <label className="mb-2 block text-sm font-medium text-gray-600">Status</label>
             <div className="flex flex-wrap gap-4">
               <label className="flex items-center gap-2">
                 <input type="radio" name="mbTipo" checked={milharBrindeTipo === "nao"} onChange={() => setMilharBrindeTipo("nao")} />
@@ -495,57 +414,61 @@ export default function ConfiguracoesPage() {
               </label>
               <label className="flex items-center gap-2">
                 <input type="radio" name="mbTipo" checked={milharBrindeTipo === "valor_fixo"} onChange={() => setMilharBrindeTipo("valor_fixo")} />
-                Valor fixo
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="radio" name="mbTipo" checked={milharBrindeTipo === "valor_multiplicado"} onChange={() => setMilharBrindeTipo("valor_multiplicado")} />
-                Valor multiplicado
+                Ativado com prêmio fixo
               </label>
             </div>
           </div>
           {milharBrindeTipo !== "nao" && (
             <div className="flex flex-wrap gap-6">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-600">Valor mínimo para ativar (R$)</label>
+                <label className="mb-1 block text-sm font-medium text-gray-600">Quanto a milhar brinde vai pagar (R$)</label>
                 <input
                   type="number"
                   min={0}
                   step={0.01}
-                  value={milharBrindeValorMin}
-                  onChange={(e) => setMilharBrindeValorMin(Math.max(0, Number(e.target.value) || 0))}
+                  value={milharBrindePremioFixo}
+                  onChange={(e) => setMilharBrindePremioFixo(Math.max(0, Number(e.target.value) || 0))}
                   className="w-32 rounded border border-gray-300 px-3 py-2"
                 />
+                <p className="mt-1 max-w-sm text-xs text-gray-500">
+                  Ex.: se colocar R$ 100,00, qualquer milhar brinde vencedora paga R$ 100,00.
+                  Não usa a cotação normal da milhar.
+                </p>
               </div>
-              {milharBrindeTipo === "valor_fixo" && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-600">Prêmio fixo (R$)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={milharBrindePremioFixo}
-                    onChange={(e) => setMilharBrindePremioFixo(Math.max(0, Number(e.target.value) || 0))}
-                    className="w-32 rounded border border-gray-300 px-3 py-2"
-                  />
-                </div>
-              )}
             </div>
           )}
           <button
             onClick={() => {
+              const valor = Math.max(0, Number(milharBrindePremioFixo) || 0);
               const mb: MilharBrindeGlobal = {
                 tipo: milharBrindeTipo,
-                valorMinimoAtivar: milharBrindeTipo !== "nao" ? milharBrindeValorMin : undefined,
-                premioFixo: milharBrindeTipo === "valor_fixo" ? milharBrindePremioFixo : undefined,
+                premioFixo: milharBrindeTipo === "valor_fixo" ? valor : undefined,
               };
               setConfig({ milharBrindeGlobal: mb });
-              addLog("Configuração", `Milhar brinde: ${milharBrindeTipo}`);
-              setMensagem({ tipo: "sucesso", texto: "Milhar brinde atualizado!" });
+              addLog(
+                "Configuração",
+                milharBrindeTipo === "nao"
+                  ? "Milhar brinde desativada"
+                  : `Milhar brinde: prêmio fixo R$ ${valor.toFixed(2)}`,
+              );
+              // Recarrega imediatamente do localStorage para CONFIRMAR a
+              // persistência na tela (evita "salvei mas o input voltou ao
+              // valor antigo" — bug típico de race condition com o sync).
+              carregarConfig();
+              toast.success(
+                milharBrindeTipo === "nao"
+                  ? "Milhar brinde desativada."
+                  : `Milhar brinde salva! Prêmio fixo: R$ ${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+              );
             }}
             className="rounded bg-orange-500 px-4 py-2 font-medium text-white hover:bg-orange-600"
           >
             Salvar
           </button>
+          <p className="mt-2 text-xs text-gray-500">
+            Esse valor se aplica a todos os cambistas do seu código (banca).
+            Cada admin tem sua própria configuração.
+          </p>
         </div>
       </div>
 
@@ -570,7 +493,8 @@ export default function ConfiguracoesPage() {
             onClick={() => {
               setConfig({ gerentePodeCancelarAposta: gerentePodeCancelar });
               addLog("Configuração", gerentePodeCancelar ? "Gerente pode cancelar" : "Só chefe pode cancelar");
-              setMensagem({ tipo: "sucesso", texto: "Permissão atualizada!" });
+              carregarConfig();
+              toast.success(gerentePodeCancelar ? "Gerente pode cancelar apostas." : "Apenas o chefe cancela apostas.");
             }}
             className="rounded bg-orange-500 px-4 py-2 font-medium text-white hover:bg-orange-600"
           >

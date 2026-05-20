@@ -13,7 +13,11 @@ export interface Gerente {
   descricao: string;
   criarCambista: boolean;
   adicionarSaldo: boolean;
-  status: "ativo" | "inativo";
+  /**
+   * "excluido" = soft delete propagado via Supabase para todos os dispositivos.
+   * Telas e logins filtram quem está com esse status.
+   */
+  status: "ativo" | "inativo" | "excluido";
   socio: string;
   /** C/S = Contas/Sócio. Ex.: indicador de contas ou código. */
   contasSocio?: string;
@@ -43,7 +47,11 @@ export interface Cambista {
   endereco: string;
   telefone: string;
   descricao: string;
-  status: "ativo" | "inativo";
+  /**
+   * "excluido" = soft delete propagado via Supabase para todos os dispositivos.
+   * Telas e logins filtram quem está com esse status.
+   */
+  status: "ativo" | "inativo" | "excluido";
   risco: string;
   // Prestar contas
   entrada: number;

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { getLogs } from "@/lib/auditoria";
 import { getAdminCodigo } from "@/lib/auth";
+import { hojeIsoDate } from "@/lib/date-utils";
 
 function formatarData(iso: string) {
   try {
@@ -25,8 +26,8 @@ export default function AuditoriaPage() {
   const [filtroAcao, setFiltroAcao] = useState("");
   const [filtroTexto, setFiltroTexto] = useState("");
   const [filtroUsuario, setFiltroUsuario] = useState("");
-  const [dataInicio, setDataInicio] = useState("");
-  const [dataFim, setDataFim] = useState("");
+  const [dataInicio, setDataInicio] = useState<string>(() => hojeIsoDate());
+  const [dataFim, setDataFim] = useState<string>(() => hojeIsoDate());
   const [ordenarPor, setOrdenarPor] = useState<"data" | "tipo" | "id">("data");
 
   const logs = useMemo(() => getLogs(), []);

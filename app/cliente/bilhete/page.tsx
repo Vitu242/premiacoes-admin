@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -12,16 +12,22 @@ import {
   podeCancelarBilhete,
   cancelarBilhete,
   calcularComissaoBilhete,
-  calcularPremioPotencialBilhete,
   getCotacaoEfetiva,
   getConfig,
+  getPremioMilharBrinde,
   podeImprimirSegundaVia,
 } from "@/lib/store";
 import { conferirBilhete } from "@/lib/conferencia";
 import type { Bilhete, Extracao } from "@/lib/types";
 
+import { parseDataPtBrOuIso, hojeIsoDate, isSameIsoInputDate, formatarDataHoraBr } from "@/lib/date-utils";
+import { ordenarBilhetesRecentesPrimeiro } from "@/lib/list-order";
 import { COTACOES_LABELS } from "@/lib/cotacoes";
 import { useConfigRefresh, useVisibilityRefresh } from "@/lib/use-config-refresh";
+import PrintTermicaBtn from "@/app/components/PrintTermicaBtn";
+import BilheteDetalhado from "@/app/components/BilheteDetalhado";
+import CompartilharBilheteBtn from "@/app/components/CompartilharBilheteBtn";
+import { useBranding } from "@/app/components/BrandingProvider";
 
 const MODALIDADES: Record<string, string> = {
   grupo: "GRUPO",
@@ -36,15 +42,17 @@ function formatarMoeda(v: number) {
 }
 
 function formatarData(s: string) {
-  return s.replace(",", " ").slice(0, 17);
+  return formatarDataHoraBr(s);
 }
 
 export default function ClienteBilhetePage() {
   const router = useRouter();
+  const { branding } = useBranding();
+  const bilheteRef = useRef<HTMLDivElement>(null);
   const [cambistaId, setCambistaId] = useState<string | null>(null);
   const [codigoBanca, setCodigoBanca] = useState("");
   const [filtroSituacao, setFiltroSituacao] = useState("todos");
-  const [filtroData, setFiltroData] = useState("");
+  const [filtroData, setFiltroData] = useState<string>(() => hojeIsoDate());
   const [filtroCodigo, setFiltroCodigo] = useState("");
   const [bilhetes, setBilhetes] = useState<Bilhete[]>([]);
   const [detalhe, setDetalhe] = useState<Bilhete | null>(null);
@@ -59,7 +67,7 @@ export default function ClienteBilhetePage() {
   useEffect(() => {
     const auth = localStorage.getItem("premiacoes_cliente");
     if (!auth) {
-      router.replace("/cliente/login");
+      router.replace("/cliente");
       return;
     }
     const { cambistaId: cid, codigo: c } = JSON.parse(auth);
@@ -73,35 +81,31 @@ export default function ClienteBilhetePage() {
     setTextoBilhete(c.textoRodapeBilhete ?? "");
   });
 
-  useVisibilityRefresh(() => {
-    if (cambistaId) aplicarFiltros();
-  });
-
-  const aplicarFiltros = () => {
+  const aplicarFiltros = useCallback(() => {
     if (!cambistaId) return;
     let lista = getBilhetes().filter((b) => b.cambistaId === cambistaId);
     if (filtroSituacao !== "todos") {
       lista = lista.filter((b) => b.situacao === filtroSituacao);
     }
     if (filtroData) {
-      const [y, m, d] = filtroData.split("-");
-      const busca = `${d}/${m}/${y.slice(2)}`;
-      lista = lista.filter((b) => b.data.includes(busca));
+      lista = lista.filter((b) => isSameIsoInputDate(b.data, filtroData));
     }
     if (filtroCodigo.trim()) {
       lista = lista.filter((b) => b.codigo.includes(filtroCodigo.trim()));
     }
-    setBilhetes(lista.sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime()));
-  };
+    setBilhetes(ordenarBilhetesRecentesPrimeiro(lista));
+  }, [cambistaId, filtroSituacao, filtroData, filtroCodigo]);
+
+  useVisibilityRefresh(aplicarFiltros);
 
   useEffect(() => {
     aplicarFiltros();
-  }, [cambistaId, filtroSituacao, filtroData, filtroCodigo]);
+  }, [aplicarFiltros]);
 
   const cambista = cambistaId ? cambistas.find((c) => c.id === cambistaId) : null;
   const bancaNome = codigoBanca ? codigoBanca.charAt(0).toUpperCase() + codigoBanca.slice(1) + " Premiações" : "Premiações";
 
-  const handleCancelar = (b: Bilhete) => {
+  const handleCancelar = async (b: Bilhete) => {
     const ext = extracoes.find((e) => e.id === b.extracaoId);
     if (b.situacao !== "pendente") {
       alert("Só é possível cancelar bilhetes pendentes.");
@@ -115,7 +119,7 @@ export default function ClienteBilhetePage() {
       return;
     }
     if (!confirm("Cancelar este bilhete?")) return;
-    if (cancelarBilhete(b.id)) {
+    if (await cancelarBilhete(b.id)) {
       setBilhetes((prev) => prev.map((x) => (x.id === b.id ? { ...x, situacao: "cancelado" as const } : x)));
       setDetalhe((prev) => (prev?.id === b.id ? { ...prev, situacao: "cancelado" as const } : prev));
     }
@@ -130,37 +134,37 @@ export default function ClienteBilhetePage() {
 
   if (!cambista) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-white">
-        <p className="text-gray-500">Carregando...</p>
+      <div className="flex min-h-screen items-center justify-center bg-white dark:bg-slate-950">
+        <p className="text-gray-500 dark:text-slate-400">Carregando...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f0e8] pb-24">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white pb-28 dark:from-slate-950 dark:to-slate-900">
       {/* Header */}
-      <header className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-4">
+      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200/60 bg-white/85 px-4 py-3 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/85">
         <button
           type="button"
-          onClick={() => router.back()}
-          className="rounded p-2 text-gray-600 hover:bg-gray-100"
+          onClick={() => router.push("/cliente")}
+          className="rounded-full p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
           aria-label="Voltar"
         >
-          <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2.2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
           </svg>
         </button>
-        <h1 className="text-lg font-bold text-gray-800">{bancaNome}</h1>
-        <div className="w-10" />
+        <h1 className="text-base font-bold text-slate-800 dark:text-slate-100">Meus bilhetes</h1>
+        <div className="w-9" />
       </header>
 
       {/* Filtros */}
-      <div className="border-b border-gray-200 bg-white px-4 py-3">
+      <div className="border-b border-gray-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900/80">
         <div className="flex flex-wrap gap-2">
           <select
             value={filtroSituacao}
             onChange={(e) => setFiltroSituacao(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
+            className="rounded border border-gray-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
           >
             <option value="todos">Todos</option>
             <option value="pendente">Pendente</option>
@@ -172,14 +176,24 @@ export default function ClienteBilhetePage() {
             type="date"
             value={filtroData}
             onChange={(e) => setFiltroData(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
+            className="rounded border border-gray-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
           />
+          {filtroData && (
+            <button
+              type="button"
+              onClick={() => setFiltroData("")}
+              className="rounded border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              title="Ver bilhetes de todas as datas"
+            >
+              Ver todos
+            </button>
+          )}
           <input
             type="text"
             placeholder="Código"
             value={filtroCodigo}
             onChange={(e) => setFiltroCodigo(e.target.value)}
-            className="flex-1 min-w-[100px] rounded border border-gray-300 px-3 py-2 text-sm"
+            className="flex-1 min-w-[100px] rounded border border-gray-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
           />
           <button
             type="button"
@@ -194,37 +208,59 @@ export default function ClienteBilhetePage() {
       {/* Lista de bilhetes */}
       <div className="space-y-3 p-4">
         {bilhetes.length === 0 ? (
-          <p className="text-center text-gray-500 py-8">Nenhum bilhete encontrado.</p>
+          <div className="rounded-2xl border-2 border-dashed border-slate-200 p-12 text-center dark:border-slate-700">
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-slate-800">
+              <svg className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 8a2 2 0 012-2h14a2 2 0 012 2v2a2 2 0 100 4v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 100-4V8z"/></svg>
+            </div>
+            <p className="font-medium text-slate-700 dark:text-slate-200">Nenhum bilhete encontrado</p>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Tente ajustar os filtros ou faça uma nova venda</p>
+          </div>
         ) : (
-          bilhetes.map((b) => (
+          bilhetes.map((b) => {
+            const cor =
+              b.situacao === "pago" ? "border-emerald-300 bg-emerald-50/40 dark:bg-emerald-900/10" :
+              b.situacao === "cancelado" ? "border-rose-200 bg-rose-50/40 dark:bg-rose-900/10" :
+              b.situacao === "perdedor" ? "border-slate-200 bg-slate-50/40 dark:bg-slate-800/40" :
+              "border-amber-200 bg-amber-50/40 dark:bg-amber-900/10";
+            const badge =
+              b.situacao === "pago" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200" :
+              b.situacao === "cancelado" ? "bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-200" :
+              b.situacao === "perdedor" ? "bg-red-100 text-red-700 ring-1 ring-red-200 dark:bg-red-900/50 dark:text-red-200 dark:ring-red-800" :
+              "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200";
+            const label =
+              b.situacao === "pago" ? "Pago" :
+              b.situacao === "cancelado" ? "Cancelado" :
+              b.situacao === "perdedor" ? "Sem prêmio" :
+              "Aguardando";
+            return (
             <div
               key={b.id}
-              className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
+              className={`overflow-hidden rounded-2xl border bg-white shadow-sm transition-all hover:shadow-md dark:bg-slate-800 ${cor}`}
             >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <p className="text-xs text-gray-500">PULE</p>
-                  <p className="text-lg font-bold text-gray-800">{b.codigo}</p>
-                  <p className="mt-1 text-sm text-gray-600">
-                    Data: {formatarData(b.data)}
+              <div className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-300">Bilhete</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${badge}`}>{label}</span>
+                  </div>
+                  <p className="mt-0.5 font-mono text-xl font-extrabold tracking-wide text-slate-800 dark:text-slate-100">
+                    {b.codigo}
                   </p>
-                  <p className="text-sm text-gray-600">
-                    Valor: {formatarMoeda(b.total)} | Comissão: {formatarMoeda(getComissao(b))} | Prêmio: {formatarMoeda(cambista ? calcularPremioPotencialBilhete(b, cambista) : 0)}
+                  <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                    {b.extracaoNome} · {formatarData(b.data)}
                   </p>
+                  <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
+                    <span className="text-slate-700 dark:text-slate-200">
+                      <span className="text-slate-500 dark:text-slate-400">Total:</span>{" "}
+                      <strong className="text-slate-900 dark:text-white">{formatarMoeda(b.total)}</strong>
+                    </span>
+                    <span className="text-slate-700 dark:text-slate-200">
+                      <span className="text-slate-500 dark:text-slate-400">Comissão:</span>{" "}
+                      <span className="font-medium text-slate-900 dark:text-white">{formatarMoeda(getComissao(b))}</span>
+                    </span>
+                  </div>
                 </div>
-                <span
-                  className={`rounded-full px-2 py-1 text-xs font-medium ${
-                    b.situacao === "pendente"
-                      ? "bg-gray-200 text-gray-700"
-                      : b.situacao === "pago"
-                      ? "bg-green-100 text-green-700"
-                      : b.situacao === "cancelado"
-                      ? "bg-red-100 text-red-700"
-                      : "bg-gray-100 text-gray-600"
-                  }`}
-                >
-                  {b.situacao}
-                </span>
               </div>
               {b.situacao === "pendente" && podeCancelar(b) && (
                 <button
@@ -236,93 +272,98 @@ export default function ClienteBilhetePage() {
               )}
               <button
                 onClick={() => setDetalhe(detalhe?.id === b.id ? null : b)}
-                className="mt-2 w-full rounded border border-gray-300 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                className="mt-2 w-full rounded border border-gray-300 py-2 text-sm font-medium text-slate-800 hover:bg-gray-50 dark:border-slate-500 dark:bg-slate-700/80 dark:text-slate-50 dark:hover:bg-slate-600"
               >
                 {detalhe?.id === b.id ? "Ocultar detalhes" : "Ver detalhes"}
               </button>
 
-              {/* Detalhe expandido */}
+              {/* Detalhe expandido — layout fiel ao recibo da banca */}
               {detalhe?.id === b.id && (() => {
                 const resultado = getResultadoByExtracaoData(b.extracaoId, b.data);
-                const conf = conferirBilhete(b, resultado, cambista ?? null, getCotacaoEfetiva);
+                const conf = conferirBilhete(b, resultado, cambista ?? null, getCotacaoEfetiva, getPremioMilharBrinde());
+                const captionShare = `Bilhete ${b.codigo}\n${b.extracaoNome}\nTotal: ${formatarMoeda(b.total)}`;
                 return (
-                <div className="mt-4 border-t border-gray-100 pt-4 text-sm">
-                  <p className="text-gray-500">Emitido: {formatarData(b.data)}</p>
-                  <p className="text-gray-500">Ponto: {cambista?.login}</p>
-                  <p className="mt-2 font-medium text-gray-700">Tradicional</p>
-                  <p className="text-gray-600">{b.extracaoNome}</p>
-                  {b.itens.map((item, i) => (
-                    <div key={i} className="mt-1">
-                      <span className="font-medium">{MODALIDADES[item.modalidade] || item.modalidade}</span>{" "}
-                      <span className="font-bold">{item.numeros}</span>
-                      <span className="text-gray-600"> | {item.premio || "1/1"} — {formatarMoeda(item.valor)}</span>
-                      {item.milharBrinde && (
-                        <p className="text-green-600">MILHAR BRINDE {item.premio || "1/1"} {item.milharBrinde}</p>
-                      )}
-                    </div>
-                  ))}
-                  <p className="mt-3 font-bold text-gray-800">TOTAL: {formatarMoeda(b.total)}</p>
-                  <p className="text-sm text-gray-600">Prêmio potencial: {formatarMoeda(cambista ? calcularPremioPotencialBilhete(b, cambista) : 0)}</p>
+                <div className="mt-4 border-t border-gray-100 pt-4">
+                  <BilheteDetalhado
+                    ref={bilheteRef}
+                    bilhete={b}
+                    bancaNome={branding.displayName || bancaNome}
+                    cambistaNome={cambista?.login ?? ""}
+                    cotacaoPara={(mod) => cambista ? getCotacaoEfetiva(cambista, mod as never) : 0}
+                    rodapeTexto={branding.bilheteRodape || textoBilhete || undefined}
+                    logoUrl={branding.logoUrl ?? null}
+                  />
 
-                  {/* Calculadora: resultado e valor ganho */}
-                  <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
-                    <p className="mb-2 font-medium text-gray-800">Conferência</p>
+                  {/* Conferência (não vai pra imagem; fica abaixo do bilhete) */}
+                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+                    <p className="mb-2 text-sm font-semibold text-slate-800 dark:text-slate-100">Conferência</p>
                     {resultado ? (
                       <>
-                        <p className={`text-lg font-bold ${conf.vencedor ? "text-green-700" : "text-gray-700"}`}>
-                          {conf.vencedor ? `Vencedor ${formatarMoeda(conf.valorGanho)}` : "Perdedor"}
+                        <p className={`text-lg font-bold ${conf.vencedor ? "text-emerald-700" : "text-slate-600 dark:text-slate-300"}`}>
+                          {conf.vencedor ? `Vencedor — ${formatarMoeda(conf.valorGanho)}` : "Sem prêmio nesta extração"}
                         </p>
                         {conf.itens.some((x) => x.bateu) && (
-                          <ul className="mt-1 list-inside list-disc text-xs text-gray-600">
+                          <ul className="mt-1 list-inside list-disc text-xs text-slate-600 dark:text-slate-300">
                             {conf.itens.filter((x) => x.bateu).map((x, i) => (
-                              <li key={i}>{MODALIDADES[x.item.modalidade]} {x.item.numeros}: {formatarMoeda(x.valorGanho)}</li>
+                              <li key={i}>
+                                {x.brindeBateu
+                                  ? `Milhar Brinde ${x.item.milharBrinde}: ${formatarMoeda(x.brindeValorGanho ?? x.valorGanho)}`
+                                  : `${MODALIDADES[x.item.modalidade] || x.item.modalidade} ${x.item.numeros}: ${formatarMoeda(x.valorGanho)}`}
+                              </li>
                             ))}
                           </ul>
                         )}
                       </>
                     ) : (
-                      <p className="text-gray-500">Aguardando resultado da extração.</p>
+                      <p className="text-sm text-slate-500 dark:text-slate-400">Aguardando resultado da extração.</p>
                     )}
                   </div>
-                  <p className="mt-2 text-xs text-blue-600">
-                    {textoBilhete ||
-                      "Confira seu bilhete, a banca não se responsabiliza por qualquer erro do cambista."}
-                  </p>
-                  <p className="mt-1 text-xs text-gray-500">
-                    {bancaNome} agradece a sua preferência, boa sorte e ótimos resultados!
-                  </p>
+
                   <div className="mt-4 flex flex-wrap gap-2">
                     <Link
                       href="/cliente"
-                      className="flex-1 min-w-[80px] rounded bg-blue-100 py-2 text-center text-sm font-medium text-blue-700"
+                      className="flex-1 min-w-[80px] rounded-lg bg-blue-100 py-2 text-center text-sm font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
                     >
                       Início
                     </Link>
-                    <button
-                      onClick={() => {
-                        if (navigator.share) {
-                          navigator.share({
-                            title: `Bilhete ${b.codigo}`,
-                            text: `Bilhete ${b.codigo} - ${b.extracaoNome} - Total ${formatarMoeda(b.total)}`,
-                          });
-                        } else {
-                          navigator.clipboard.writeText(`Bilhete ${b.codigo} - ${b.extracaoNome} - ${formatarMoeda(b.total)}`);
-                          alert("Código copiado!");
-                        }
-                      }}
-                      className="flex-1 min-w-[80px] rounded bg-blue-600 py-2 text-sm font-medium text-white"
-                    >
-                      Enviar
-                    </button>
+
+                    <CompartilharBilheteBtn
+                      targetRef={bilheteRef}
+                      caption={captionShare}
+                      filename={`bilhete-${b.codigo}.png`}
+                      label="Enviar"
+                      className="flex-1 min-w-[100px]"
+                    />
+
                     {podeImprimirSegundaVia(b.data, tempoSegundaVia) ? (
-                      <button
-                        onClick={() => window.print()}
-                        className="flex-1 min-w-[80px] rounded bg-gray-700 py-2 text-sm font-medium text-white"
-                      >
-                        Imprimir
-                      </button>
+                      <>
+                        <button
+                          onClick={() => window.print()}
+                          className="flex-1 min-w-[80px] rounded-lg bg-slate-700 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                        >
+                          Imprimir
+                        </button>
+                        <PrintTermicaBtn
+                          className="flex-1 min-w-[80px]"
+                          bilhete={{
+                            banca: branding.displayName || bancaNome,
+                            codigo: b.codigo,
+                            data: b.data,
+                            cambista: cambista?.login ?? "",
+                            extracaoNome: b.extracaoNome,
+                            itens: b.itens.map((it) => ({
+                              modalidade: MODALIDADES[it.modalidade] || it.modalidade,
+                              numeros: it.numeros,
+                              valor: it.valor,
+                              premio: it.premio,
+                            })),
+                            total: b.total,
+                            rodape: branding.bilheteRodape || textoBilhete || undefined,
+                          }}
+                        />
+                      </>
                     ) : (
-                      <span className="flex-1 min-w-[80px] rounded bg-gray-200 py-2 text-center text-xs text-gray-500">
+                      <span className="flex-1 min-w-[80px] rounded-lg bg-gray-200 py-2 text-center text-xs text-gray-500 dark:bg-slate-700 dark:text-slate-400">
                         2ª via: prazo de {tempoSegundaVia} min expirado
                       </span>
                     )}
@@ -330,8 +371,10 @@ export default function ClienteBilhetePage() {
                 </div>
                 );
               })()}
+              </div>
             </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

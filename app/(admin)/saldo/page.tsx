@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { getCambistasPorCodigo, getGerentesPorCodigo, updateCambista } from "@/lib/store";
 import { addLog } from "@/lib/auditoria";
 import { getAdminCodigo } from "@/lib/auth";
+import { normalizeLoginKey } from "@/lib/login-normalize";
 
 function formatarMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -17,10 +18,42 @@ export default function SaldoPage() {
   const [ajuste, setAjuste] = useState(0);
   const [filtroNome, setFiltroNome] = useState("");
   const [filtroGerente, setFiltroGerente] = useState("todos");
+  /** Trava cliques duplos por cambista enquanto a alteração de saldo
+   *  está sendo processada (evita race + toques duplos). */
+  const [ajustandoId, setAjustandoId] = useState<string | null>(null);
 
   useEffect(() => {
     if (codigo) setCambistas(getCambistasPorCodigo(codigo));
   }, [codigo]);
+
+  /** Aplica delta de saldo de forma atômica com proteção contra duplo clique
+   *  e confirmação para alterações grandes. */
+  const aplicarDelta = (cId: string, delta: number, label: string, login: string, saldoAtual: number) => {
+    if (ajustandoId === cId) return;
+    if (Math.abs(delta) >= 100) {
+      const novo = Math.max(0, saldoAtual + delta);
+      const fmt = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+      if (
+        !window.confirm(
+          `Confirmar alteração de saldo de ${login}?\n\n` +
+            `Atual: ${fmt(saldoAtual)}\n` +
+            `Novo: ${fmt(novo)}\n` +
+            `Diferença: ${delta > 0 ? "+" : ""}${fmt(delta)}`,
+        )
+      ) {
+        return;
+      }
+    }
+    setAjustandoId(cId);
+    try {
+      const novo = Math.max(0, saldoAtual + delta);
+      updateCambista(cId, { saldo: novo });
+      addLog(label, `${login}: ${formatarMoeda(novo)}`);
+      setCambistas(getCambistasPorCodigo(codigo ?? ""));
+    } finally {
+      setAjustandoId(null);
+    }
+  };
 
   const filtrar = useMemo(() => {
     let r = cambistas;
@@ -28,8 +61,8 @@ export default function SaldoPage() {
       r = r.filter((c) => c.gerenteId === filtroGerente);
     }
     if (filtroNome.trim()) {
-      const t = filtroNome.toLowerCase();
-      r = r.filter((c) => c.login.toLowerCase().includes(t));
+      const t = normalizeLoginKey(filtroNome);
+      r = r.filter((c) => normalizeLoginKey(c.login).includes(t));
     }
     return r;
   }, [cambistas, filtroNome, filtroGerente]);
@@ -38,19 +71,17 @@ export default function SaldoPage() {
 
   const handleAjustar = (delta: number) => {
     if (!cambista) return;
-    const novoSaldo = Math.max(0, cambista.saldo + delta);
-    updateCambista(cambista.id, { saldo: novoSaldo });
-    addLog("Ajustou saldo", `${cambista.login}: ${delta > 0 ? "+" : ""}${delta} → ${novoSaldo}`);
-    setCambistas(getCambistasPorCodigo(codigo ?? ""));
+    aplicarDelta(cambista.id, delta, "Ajustou saldo", cambista.login, cambista.saldo);
     setAjuste(0);
   };
 
   const handleAjusteManual = () => {
-    if (!cambista || ajuste === 0) return;
-    const novoSaldo = Math.max(0, cambista.saldo + ajuste);
-    updateCambista(cambista.id, { saldo: novoSaldo });
-    addLog("Ajustou saldo", `${cambista.login}: ${ajuste > 0 ? "+" : ""}${ajuste} → ${novoSaldo}`);
-    setCambistas(getCambistasPorCodigo(codigo ?? ""));
+    if (!cambista || !Number.isFinite(ajuste) || ajuste === 0) return;
+    if (Math.abs(ajuste) > 1_000_000) {
+      alert("Valor de ajuste fora do limite permitido.");
+      return;
+    }
+    aplicarDelta(cambista.id, ajuste, "Ajustou saldo", cambista.login, cambista.saldo);
     setAjuste(0);
   };
 
@@ -114,46 +145,30 @@ export default function SaldoPage() {
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap items-center gap-1">
                       <button
-                        onClick={() => {
-                          const novo = Math.max(0, c.saldo - 10);
-                          updateCambista(c.id, { saldo: novo });
-                          addLog("Saldo −10", `${c.login}: ${formatarMoeda(novo)}`);
-                          setCambistas(getCambistasPorCodigo(codigo ?? ""));
-                        }}
-                        className="rounded bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200"
+                        onClick={() => aplicarDelta(c.id, -10, "Saldo −10", c.login, c.saldo)}
+                        disabled={ajustandoId === c.id}
+                        className="rounded bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200 disabled:opacity-50"
                       >
                         −10
                       </button>
                       <button
-                        onClick={() => {
-                          const novo = Math.max(0, c.saldo - 1);
-                          updateCambista(c.id, { saldo: novo });
-                          addLog("Saldo −1", `${c.login}: ${formatarMoeda(novo)}`);
-                          setCambistas(getCambistasPorCodigo(codigo ?? ""));
-                        }}
-                        className="rounded bg-gray-200 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-300"
+                        onClick={() => aplicarDelta(c.id, -1, "Saldo −1", c.login, c.saldo)}
+                        disabled={ajustandoId === c.id}
+                        className="rounded bg-gray-200 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
                       >
                         −1
                       </button>
                       <button
-                        onClick={() => {
-                          const novo = c.saldo + 1;
-                          updateCambista(c.id, { saldo: novo });
-                          addLog("Saldo +1", `${c.login}: ${formatarMoeda(novo)}`);
-                          setCambistas(getCambistasPorCodigo(codigo ?? ""));
-                        }}
-                        className="rounded bg-gray-200 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-300"
+                        onClick={() => aplicarDelta(c.id, 1, "Saldo +1", c.login, c.saldo)}
+                        disabled={ajustandoId === c.id}
+                        className="rounded bg-gray-200 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
                       >
                         +1
                       </button>
                       <button
-                        onClick={() => {
-                          const novo = c.saldo + 10;
-                          updateCambista(c.id, { saldo: novo });
-                          addLog("Saldo +10", `${c.login}: ${formatarMoeda(novo)}`);
-                          setCambistas(getCambistasPorCodigo(codigo ?? ""));
-                        }}
-                        className="rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-200"
+                        onClick={() => aplicarDelta(c.id, 10, "Saldo +10", c.login, c.saldo)}
+                        disabled={ajustandoId === c.id}
+                        className="rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-200 disabled:opacity-50"
                       >
                         +10
                       </button>

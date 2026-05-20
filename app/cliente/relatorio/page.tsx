@@ -42,7 +42,7 @@ export default function ClienteRelatorioPage() {
   useEffect(() => {
     const auth = localStorage.getItem("premiacoes_cliente");
     if (!auth) {
-      router.replace("/cliente/login");
+      router.replace("/cliente");
       return;
     }
     const { cambistaId: cid } = JSON.parse(auth);
@@ -121,7 +121,7 @@ export default function ClienteRelatorioPage() {
       <div className="mb-4 flex items-center gap-2">
         <button
           type="button"
-          onClick={() => router.back()}
+          onClick={() => router.push("/cliente")}
           className="rounded p-2 text-gray-600 hover:bg-gray-100 print:hidden"
           aria-label="Voltar"
         >

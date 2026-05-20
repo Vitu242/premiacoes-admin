@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -12,7 +12,7 @@ import {
   podeRealizarVenda,
   getSaldoDisponivel,
   getCotacaoEfetiva,
-  getPremioMax,
+  getPremioMaxExtracao,
   getConfig,
 } from "@/lib/store";
 import type { Extracao, ModalidadeBilhete, ItemBilhete } from "@/lib/types";
@@ -20,7 +20,32 @@ import { COTACOES_LABELS, modalidadePodeApostar } from "@/lib/cotacoes";
 import type { CotacaoKey, StatusModalidade } from "@/lib/cotacoes";
 import { useConfigRefresh } from "@/lib/use-config-refresh";
 
-type Step = "extracao" | "modalidade" | "variante" | "numeros" | "premio" | "milharBrinde" | "valor" | "confirmar";
+type Step = "extracao" | "modalidade" | "variante" | "numeros" | "premio" | "milharBrinde" | "valor" | "carrinho" | "confirmar";
+
+/** Ordem dos passos: usada para detectar avanço vs retrocesso do fluxo. */
+const STEP_ORDER: Record<Step, number> = {
+  extracao: 0,
+  modalidade: 1,
+  variante: 2,
+  numeros: 3,
+  premio: 4,
+  milharBrinde: 5,
+  valor: 6,
+  carrinho: 7,
+  confirmar: 8,
+};
+
+/** Item temporário do carrinho (antes de aplicar dividir/multiplicar) */
+interface ItemCarrinho {
+  modalidade: ModalidadeBilhete;
+  numeros: string;
+  premio: string;
+  milharBrinde?: string;
+  /** Valor digitado (R$ informado pelo cliente) */
+  valorDigitado: number;
+  /** Modo escolhido na hora: "multiplicar" = valorDigitado por palpite; "dividir" = valorDigitado total dividido entre palpites */
+  valorModo: "dividir" | "multiplicar";
+}
 
 /** 12 modalidades da tela do cliente (como na imagem). Com variantes = passo extra para escolher 1/2, 1/5, etc. */
 const MODALIDADES_TELA: { label: string; key?: CotacaoKey; variantes?: { key: CotacaoKey; label: string }[] }[] = [
@@ -40,7 +65,7 @@ const MODALIDADES_TELA: { label: string; key?: CotacaoKey; variantes?: { key: Co
 
 /** Config do input de números por modalidade (para as que têm key direta ou após variante). */
 function getModalidadeConfig(key: CotacaoKey): { minDigits: number; maxDigits: number; max: number; count: number } {
-  const grupo = { minDigits: 1, maxDigits: 2, max: 25, count: 1 };
+  const grupo = { minDigits: 2, maxDigits: 2, max: 25, count: 1 };
   const dezena = { minDigits: 2, maxDigits: 2, max: 99, count: 1 };
   const centena = { minDigits: 3, maxDigits: 3, max: 999, count: 1 };
   const milhar = { minDigits: 4, maxDigits: 4, max: 9999, count: 1 };
@@ -51,6 +76,38 @@ function getModalidadeConfig(key: CotacaoKey): { minDigits: number; maxDigits: n
   if (key.startsWith("duque_dezena") || key.startsWith("terno_dezena")) return { ...dezena, count: key.startsWith("duque") ? 2 : 3 };
   if (key.includes("centena") && key !== "milhar_e_centena" && key !== "mc_invertida") return centena;
   return milhar;
+}
+
+function gerarMilharBrindeAleatoria(): string {
+  return String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+}
+
+/**
+ * Interpreta a string de números sem usar trim() no valor inteiro (trim apagava o
+ * espaço final que marca "próximo palpite" e colava o novo dígito no palpite anterior).
+ */
+function splitNumerosPalpites(raw: string): { completed: string[]; draft: string } {
+  const s = raw.replace(/^\s+/, "");
+  if (!s) return { completed: [], draft: "" };
+  if (/\s$/.test(s)) {
+    const body = s.replace(/\s+$/, "");
+    const completed = body.length ? body.split(/\s+/).filter(Boolean) : [];
+    return { completed, draft: "" };
+  }
+  const parts = s.split(/\s+/).filter(Boolean);
+  if (!parts.length) return { completed: [], draft: "" };
+  const draft = parts[parts.length - 1]!;
+  const completed = parts.slice(0, -1);
+  return { completed, draft };
+}
+
+function todosPalpitesNumeros(raw: string): string[] {
+  const { completed, draft } = splitNumerosPalpites(raw);
+  return draft.length > 0 ? [...completed, draft] : completed;
+}
+
+function contarPalpitesNumeros(raw: string): number {
+  return todosPalpitesNumeros(raw).length;
 }
 
 function formatarMoeda(v: number) {
@@ -73,34 +130,55 @@ export default function ClienteVenderPage() {
   const [erro, setErro] = useState("");
   const [apostasAtivas, setApostasAtivas] = useState(true);
   const [sucesso, setSucesso] = useState<{ codigo: string } | null>(null);
+  const [enviandoVenda, setEnviandoVenda] = useState(false);
+  const [carrinho, setCarrinho] = useState<ItemCarrinho[]>([]);
+  /** Quando o bilhete tem múltiplos itens, o cliente pode optar entre:
+   *   "individual" = cada item mantém o valor digitado individualmente;
+   *   "dividir_total" = soma de valoresDigitados é dividida em partes iguais entre todos os itens. */
+  const [modoBilhete, setModoBilhete] = useState<"individual" | "dividir_total">("individual");
   const [modalidadesCfg, setModalidadesCfg] = useState<
     Record<string, { minValor?: number; maxValor?: number; ativa?: boolean; status?: StatusModalidade }> | null
   >(null);
 
   const extracoes = getExtracoes().filter((e) => e.ativa && extracaoAceitaApostas(e.encerra) && extracaoRodaHoje(e));
   const cambista = cambistaId ? getCambistas().find((c) => c.id === cambistaId) : null;
-  const premioMax = getPremioMax();
+  const premioMax = getPremioMaxExtracao(extracao?.id);
 
   useEffect(() => {
     const auth = localStorage.getItem("premiacoes_cliente");
     if (!auth) {
-      router.replace("/cliente/login");
+      // Se não houver sessão, vai para a HOME — quem decide se mostra o
+      // login é a `/cliente/page.tsx`. Isso evita derrubar o usuário no
+      // login no meio de um fluxo (e o botão voltar dentro do app nunca
+      // mais traz a tela de login para o histórico).
+      router.replace("/cliente");
       return;
     }
     const { cambistaId: cid } = JSON.parse(auth);
     setCambistaId(cid);
-    const cfg = getConfig() as any;
+    const cfg = getConfig();
     setApostasAtivas(cfg.apostasAtivas ?? true);
     setModalidadesCfg(cfg.modalidades ?? null);
   }, [router]);
 
-  useConfigRefresh((cfg: any) => {
+  useConfigRefresh((cfg) => {
     setApostasAtivas(cfg.apostasAtivas ?? true);
     setModalidadesCfg(cfg.modalidades ?? null);
   });
 
   const cfg = getConfig() as { milharBrindeGlobal?: { tipo?: string } };
-  const mostraMilharBrinde = (cambista?.milharBrinde === "sim") && (cfg.milharBrindeGlobal?.tipo !== "nao");
+  const jaTemMilharBrindeNoBilhete = carrinho.some((item) => !!item.milharBrinde);
+  const mostraMilharBrinde =
+    (cambista?.milharBrinde === "sim") &&
+    (cfg.milharBrindeGlobal?.tipo !== "nao") &&
+    !jaTemMilharBrindeNoBilhete;
+
+  const confirmarCancelamentoBilhete = () => {
+    if (typeof window === "undefined") return false;
+    return window.confirm(
+      "Deseja realmente sair? O bilhete em andamento será cancelado.",
+    );
+  };
 
   const indexComVariante = (): number | null => {
     if (!modalidade) return null;
@@ -108,10 +186,13 @@ export default function ClienteVenderPage() {
     return i >= 0 ? i : null;
   };
 
-  const voltar = () => {
+  const voltarEtapa = useCallback(() => {
     setErro("");
-    if (step === "extracao") router.back();
-    else if (step === "modalidade") setStep("extracao");
+    if (step === "modalidade") {
+      // se já tem itens no carrinho, voltar leva para o carrinho (não perder os itens)
+      if (carrinho.length > 0) setStep("carrinho");
+      else setStep("extracao");
+    }
     else if (step === "variante") { setStep("modalidade"); setModalidadeGroupIndex(null); }
     else if (step === "numeros") {
       const idx = indexComVariante();
@@ -119,9 +200,158 @@ export default function ClienteVenderPage() {
     } else if (step === "premio") setStep("numeros");
     else if (step === "milharBrinde") setStep("premio");
     else if (step === "valor") {
-      if (modalidade && getPremioFixoFromKey(modalidade)) setStep("numeros");
-      else setStep(mostraMilharBrinde ? "milharBrinde" : "premio");
-    } else setStep("valor");
+      // Na etapa de valor já existe um jogo montado (extração, modalidade,
+      // números, prêmio e possivelmente brinde). Sair daqui cancela a
+      // montagem, então precisa de confirmação.
+      if (confirmarCancelamentoBilhete()) {
+        limparItemAtual();
+        setCarrinho([]);
+        setModoBilhete("individual");
+        setStep("extracao");
+      }
+    } else if (step === "carrinho") {
+      // voltar do carrinho para a extração (mantém itens)
+      setStep("extracao");
+    }
+    else if (step === "confirmar") {
+      // Última etapa antes de gerar o bilhete. Pergunta se quer mesmo
+      // sair — caso sim, descarta o bilhete inteiro.
+      if (confirmarCancelamentoBilhete()) {
+        limparItemAtual();
+        setCarrinho([]);
+        setModoBilhete("individual");
+        setStep("extracao");
+      }
+      // Se cancelar o popup, fica no passo "confirmar" mesmo.
+    }
+    else setStep("carrinho");
+  }, [carrinho.length, modalidade, mostraMilharBrinde, step]);
+
+  const voltar = () => {
+    setErro("");
+    if (step === "extracao") {
+      // Vai para a home, não para router.back(), para não cair no /cliente/login
+      // quando o usuário tiver aberto direto /cliente/vender (PWA/shortcut).
+      router.push("/cliente");
+    } else {
+      voltarEtapa();
+    }
+  };
+
+  const stepRef = useRef(step);
+  const voltarEtapaRef = useRef(voltarEtapa);
+
+  useEffect(() => {
+    const previo = stepRef.current;
+    const indoPraFrente = STEP_ORDER[step] > STEP_ORDER[previo];
+    stepRef.current = step;
+    // Toda vez que o usuário AVANÇA, adicionamos uma entrada extra no
+    // histórico. Assim, cada passo do jogo ganha sua própria entrada — o
+    // botão físico/visual de voltar consome uma de cada vez, recuando
+    // passo a passo, sem nunca sair da tela /cliente/vender (e nunca cair
+    // no /cliente/login).
+    if (indoPraFrente) {
+      try {
+        window.history.pushState({ clienteVenderStepGuard: true, step }, "");
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [step]);
+
+  useEffect(() => {
+    voltarEtapaRef.current = voltarEtapa;
+  }, [voltarEtapa]);
+
+  // Marca/limpa a flag de "bilhete em andamento" em sessionStorage para que a
+  // NavBar do cliente saiba interceptar cliques em Início/Bilhetes/Caixa/
+  // Resultados e pedir confirmação antes de descartar o bilhete.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (carrinho.length > 0 || step === "valor" || step === "confirmar") {
+        sessionStorage.setItem("vender_em_andamento", "1");
+      } else {
+        sessionStorage.removeItem("vender_em_andamento");
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [carrinho.length, step]);
+
+  useEffect(() => {
+    return () => {
+      try { sessionStorage.removeItem("vender_em_andamento"); } catch {}
+    };
+  }, []);
+
+  useEffect(() => {
+    // Adiciona uma entrada-guard inicial. Daí em diante, cada avanço de
+    // passo no useEffect [step] acrescenta a sua própria entrada. O
+    // botão físico de voltar do Android/navegador consome essas entradas
+    // uma a uma, recuando passo a passo — e em momento algum chega na
+    // tela /cliente/login.
+    try {
+      window.history.pushState({ clienteVenderStepGuard: true, step: "extracao" }, "");
+    } catch {
+      /* ignore */
+    }
+
+    const onPopState = () => {
+      if (stepRef.current === "extracao") {
+        // Sai do fluxo de venda indo para a home. `replace` para a entrada
+        // atual não acumular no histórico (assim o próximo voltar na home
+        // tenta sair do app/aba, sem voltar para /cliente/vender).
+        router.replace("/cliente");
+        return;
+      }
+      if (stepRef.current === "valor" || stepRef.current === "confirmar") {
+        // Re-empurra a entrada-guard ANTES de pedir confirmação. Assim,
+        // se o usuário cancelar o popup, ele continua na tela atual
+        // com a entrada-guard ainda no histórico — o próximo voltar vai
+        // perguntar de novo.
+        try {
+          window.history.pushState({ clienteVenderStepGuard: true, step: stepRef.current }, "");
+        } catch {
+          /* ignore */
+        }
+        const ok = window.confirm(
+          "Deseja realmente sair? O bilhete em andamento será cancelado.",
+        );
+        if (ok) {
+          setCarrinho([]);
+          setModoBilhete("individual");
+          setStep("extracao");
+        }
+        return;
+      }
+      // Recua um passo. O navegador já consumiu uma entrada quando o
+      // popstate disparou; não precisamos pushar nada de volta.
+      voltarEtapaRef.current();
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [router]);
+
+  /** Limpa apenas o item em construção, preservando o carrinho e a extração. */
+  const limparItemAtual = () => {
+    setModalidade(null);
+    setModalidadeGroupIndex(null);
+    setNumeros("");
+    setPremio("1/1");
+    setMilharBrinde("");
+    setValor("");
+    setValorModo("multiplicar");
+  };
+
+  /** Limpa tudo (após sucesso) */
+  const limparTudo = () => {
+    setStep("extracao");
+    setExtracao(null);
+    limparItemAtual();
+    setCarrinho([]);
+    setModoBilhete("individual");
   };
 
   const escolherExtracao = (e: Extracao) => {
@@ -129,6 +359,14 @@ export default function ClienteVenderPage() {
     if (!extracaoAceitaApostas(e.encerra)) {
       setErro("Tempo excedido. Esta extração já encerrou apostas.");
       return;
+    }
+    // Se trocar de extração (já havia outra), zera carrinho — jogos são por extração.
+    if (extracao && extracao.id !== e.id && carrinho.length > 0) {
+      if (!confirm(`Você tem ${carrinho.length} jogo(s) da extração "${extracao.nome}" no bilhete. Trocar de extração vai limpar esses jogos. Continuar?`)) {
+        return;
+      }
+      setCarrinho([]);
+      setModoBilhete("individual");
     }
     setExtracao(e);
     setStep("modalidade");
@@ -155,23 +393,48 @@ export default function ClienteVenderPage() {
     if (!modalidade) return;
     const config = getModalidadeConfig(modalidade);
     if (d === " ") {
-      const parts = numeros.trim().split(/\s+/);
-      const last = parts[parts.length - 1] ?? "";
-      if (last.length < config.minDigits) return;
-      if (config.count > 1 && parts.length >= config.count) return;
-      setNumeros(numeros.trim() + " ");
+      const { completed, draft } = splitNumerosPalpites(numeros);
+      if (draft.length < config.minDigits) {
+        setErro(
+          config.minDigits > 1
+            ? `Termine os ${config.minDigits} dígitos deste número antes de iniciar outro palpite.`
+            : `Digite um número antes de iniciar outro palpite.`,
+        );
+        return;
+      }
+      const tokensAgora = [...completed, draft];
+      if (config.count > 1 && tokensAgora.length >= config.count) return;
+      setNumeros(tokensAgora.join(" ") + " ");
       setErro("");
       return;
     }
-    const parts = numeros.trim().split(/\s+/);
-    const last = parts[parts.length - 1] ?? "";
-    const novaLast = last + d;
-    if (novaLast.length > config.maxDigits) return;
-    const n = parseInt(novaLast, 10);
-    if (n > config.max || (config.max === 25 && (n < 1 || n > 25))) return;
-    parts[parts.length - 1] = novaLast;
-    if (config.count > 1 && parts.length > config.count) return;
-    setNumeros(parts.join(" ").trim());
+
+    const { completed, draft } = splitNumerosPalpites(numeros);
+
+    // Auto-separação: para modalidades simples (count === 1), quando o palpite
+    // atual já está no máximo de dígitos, o próximo dígito inicia automaticamente
+    // um novo palpite. Sem botão extra — só fluxo natural.
+    if (config.count === 1 && draft.length >= config.maxDigits) {
+      const novaDraft = d;
+      const nNovo = parseInt(novaDraft, 10);
+      if (isNaN(nNovo)) return;
+      if (config.max === 25 && (nNovo < 0 || nNovo > 25)) return;
+      // Grupo/dezena exigem 2 dígitos; o próximo dígito inicia outro rascunho.
+      setNumeros(`${[...completed, draft].join(" ")} ${novaDraft}`);
+      setErro("");
+      return;
+    }
+
+    const novaDraft = draft + d;
+    if (novaDraft.length > config.maxDigits) return;
+    const n = parseInt(novaDraft, 10);
+    if (isNaN(n) || n > config.max) return;
+    // Permite digitar "0" como primeiro dígito de grupo (para formar 01..09),
+    // mas só aceita confirmar quando tiver 2 dígitos e estiver entre 01 e 25.
+    if (config.max === 25 && novaDraft.length >= config.minDigits && (n < 1 || n > 25)) return;
+    const futureTokens = [...completed, novaDraft];
+    if (config.count > 1 && futureTokens.length > config.count) return;
+    setNumeros(completed.length ? `${completed.join(" ")} ${novaDraft}` : novaDraft);
     setErro("");
   };
 
@@ -184,7 +447,7 @@ export default function ClienteVenderPage() {
   const confirmarNumeros = () => {
     if (!modalidade || !cambista) return;
     const config = getModalidadeConfig(modalidade);
-    const parts = numeros.trim().split(/\s+/).filter(Boolean);
+    const parts = todosPalpitesNumeros(numeros.trim());
     if (config.count > 1) {
       if (parts.length !== config.count) {
         setErro(`Informe ${config.count} número(s) separados por espaço.`);
@@ -208,7 +471,12 @@ export default function ClienteVenderPage() {
       }
     }
     const premioFixo = getPremioFixoFromKey(modalidade);
-    if (premioFixo) { setPremio(premioFixo); setStep(mostraMilharBrinde ? "milharBrinde" : "valor"); setValor(""); }
+    if (premioFixo) {
+      setPremio(premioFixo);
+      if (mostraMilharBrinde) setMilharBrinde(gerarMilharBrindeAleatoria());
+      setStep(mostraMilharBrinde ? "milharBrinde" : "valor");
+      setValor("");
+    }
     else { setStep("premio"); setPremio(""); }
     setErro("");
   };
@@ -219,6 +487,11 @@ export default function ClienteVenderPage() {
     if (key.includes("_1_3")) return "1/3";
     if (key.includes("_1_10")) return "1/10";
     return null;
+  }
+
+  function premioFixoDentroDoLimite(label: string): boolean {
+    const max = Number(label.split("/")[1] ?? "1");
+    return Number.isFinite(max) ? max <= premioMax : true;
   }
 
   const adicionarDigitoPremio = (d: string) => {
@@ -271,17 +544,11 @@ export default function ClienteVenderPage() {
     }
     if (mostraMilharBrinde) {
       setStep("milharBrinde");
-      setMilharBrinde("");
+      setMilharBrinde(gerarMilharBrindeAleatoria());
     } else {
       setStep("valor");
       setValor("");
     }
-  };
-
-  const pularMilharBrinde = () => {
-    setMilharBrinde("");
-    setStep("valor");
-    setValor("");
   };
 
   const adicionarDigitoMilharBrinde = (d: string) => {
@@ -298,7 +565,7 @@ export default function ClienteVenderPage() {
 
   const confirmarMilharBrinde = () => {
     if (milharBrinde.length !== 4) {
-      setErro("Milhar brinde deve ter 4 dígitos, ou pule.");
+      setErro("Milhar brinde deve ter 4 dígitos.");
       return;
     }
     setStep("valor");
@@ -306,47 +573,25 @@ export default function ClienteVenderPage() {
     setErro("");
   };
 
-  const qtdJogos = Math.max(1, numeros.trim().split(/\s+/).filter(Boolean).length);
+  const qtdJogos = Math.max(1, contarPalpitesNumeros(numeros.trim()));
   const valorDigitado = parseFloat(valor.replace(",", ".")) || 0;
   const valorTotal = valorModo === "dividir"
     ? valorDigitado
     : valorDigitado * qtdJogos;
-  const valorPorJogo = qtdJogos >= 1 ? valorTotal / qtdJogos : valorTotal;
+  const valorTotalDividir = valorDigitado;
+  const valorPorJogoDividir = qtdJogos >= 1 ? valorDigitado / qtdJogos : valorDigitado;
+  const valorTotalMultiplicar = valorDigitado * qtdJogos;
 
+  /** Valida o valor e ADICIONA o jogo ao carrinho. Vai pro passo "carrinho". */
   const confirmarValor = () => {
     if (isNaN(valorDigitado) || valorDigitado <= 0) {
       setErro("Informe um valor válido.");
       return;
     }
-     if (!modalidade) {
-       setErro("Selecione uma modalidade.");
-       return;
-     }
-     const cfg = modalidadesCfg?.[modalidade];
-     if (cfg) {
-       if (!modalidadePodeApostar(cfg)) {
-         setErro("Esta modalidade está bloqueada pela banca.");
-         return;
-       }
-       const min = cfg.minValor ?? 0;
-       const max = cfg.maxValor ?? 0;
-       if (min > 0 && valorTotal < min) {
-         setErro(`Valor mínimo para ${COTACOES_LABELS[modalidade] ?? modalidade} é ${min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`);
-         return;
-       }
-       if (max > 0 && valorTotal > max) {
-         setErro(`Valor máximo para ${COTACOES_LABELS[modalidade] ?? modalidade} é ${max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`);
-         return;
-       }
-     }
-    setStep("confirmar");
-    setErro("");
-  };
-
-  const finalizarVenda = async () => {
-    if (!extracao || !modalidade || !cambistaId || !cambista) return;
-    if (isNaN(valorDigitado) || valorDigitado <= 0) return;
-
+    if (!modalidade) {
+      setErro("Selecione uma modalidade.");
+      return;
+    }
     const cfg = modalidadesCfg?.[modalidade];
     if (cfg) {
       if (!modalidadePodeApostar(cfg)) {
@@ -364,63 +609,127 @@ export default function ClienteVenderPage() {
         return;
       }
     }
+    const novo: ItemCarrinho = {
+      modalidade,
+      numeros,
+      premio: premio || "1/1",
+      milharBrinde: milharBrinde.length === 4 ? milharBrinde : undefined,
+      valorDigitado,
+      valorModo,
+    };
+    setCarrinho([...carrinho, novo]);
+    limparItemAtual();
+    setStep("carrinho");
+    setErro("");
+  };
 
-    const check = podeRealizarVenda(cambistaId, valorTotal);
-    if (!check.ok) {
-      setErro(check.erro ?? "Saldo insuficiente.");
-      return;
+  const removerItemCarrinho = (idx: number) => {
+    setCarrinho((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const adicionarOutroJogo = () => {
+    limparItemAtual();
+    setStep("modalidade");
+    setErro("");
+  };
+
+  /**
+   * Calcula o valor final aplicado a cada item do carrinho.
+   * "individual": cada item usa o próprio (multiplicar ou dividir).
+   * "dividir_total": soma dos valoresDigitados / quantidade de itens, igual para cada item.
+   */
+  const valoresFinais = ((): number[] => {
+    if (carrinho.length === 0) return [];
+    if (modoBilhete === "dividir_total") {
+      const soma = carrinho.reduce((s, c) => s + c.valorDigitado, 0);
+      const cada = soma / carrinho.length;
+      return carrinho.map(() => cada);
+    }
+    return carrinho.map((c) => {
+      const qtd = c.numeros.trim().split(/\s+/).filter(Boolean).length || 1;
+      return c.valorModo === "dividir" ? c.valorDigitado : c.valorDigitado * qtd;
+    });
+  })();
+  const totalBilhete = valoresFinais.reduce((s, v) => s + v, 0);
+
+  const finalizarVenda = async () => {
+    if (enviandoVenda) return;
+    if (!extracao || !cambistaId || !cambista) return;
+    if (carrinho.length === 0) { setErro("Adicione ao menos um jogo."); return; }
+
+    for (let i = 0; i < carrinho.length; i++) {
+      const c = carrinho[i];
+      const v = valoresFinais[i];
+      const cfg = modalidadesCfg?.[c.modalidade];
+      if (cfg) {
+        if (!modalidadePodeApostar(cfg)) { setErro("Uma das modalidades do bilhete está bloqueada pela banca."); return; }
+        const min = cfg.minValor ?? 0;
+        const max = cfg.maxValor ?? 0;
+        if (min > 0 && v < min) {
+          setErro(`Valor mínimo para ${COTACOES_LABELS[c.modalidade] ?? c.modalidade} é ${min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`);
+          return;
+        }
+        if (max > 0 && v > max) {
+          setErro(`Valor máximo para ${COTACOES_LABELS[c.modalidade] ?? c.modalidade} é ${max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`);
+          return;
+        }
+      }
     }
 
+    const check = podeRealizarVenda(cambistaId, totalBilhete);
+    if (!check.ok) { setErro(check.erro ?? "Saldo insuficiente."); return; }
+
     try {
-      const item: ItemBilhete = {
-        modalidade,
-        numeros,
-        valor: valorTotal,
-        premio: premio || "1/1",
-        ...(milharBrinde.length === 4 && { milharBrinde }),
-      };
+      setEnviandoVenda(true);
+      const itens: ItemBilhete[] = carrinho.map((c, i) => ({
+        modalidade: c.modalidade,
+        numeros: c.numeros,
+        valor: valoresFinais[i],
+        premio: c.premio,
+        ...(c.milharBrinde ? { milharBrinde: c.milharBrinde } : {}),
+      }));
       const bilhete = await addBilhete({
         cambistaId,
         extracaoId: extracao.id,
         extracaoNome: extracao.nome,
-        itens: [item],
-        total: valorTotal,
+        itens,
+        total: totalBilhete,
         data: new Date().toLocaleString("pt-BR"),
         situacao: "pendente",
       });
       setSucesso({ codigo: bilhete.codigo });
-      setStep("extracao");
-      setExtracao(null);
-      setModalidade(null);
-      setNumeros("");
-      setPremio("1/1");
-      setMilharBrinde("");
-      setValor("");
-      setValorModo("multiplicar");
+      limparTudo();
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao finalizar venda.");
+    } finally {
+      setEnviandoVenda(false);
     }
   };
 
   if (!cambista) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-white">
-        <p className="text-gray-500">Carregando...</p>
+      <div className="flex min-h-screen items-center justify-center bg-white dark:bg-slate-950">
+        <p className="text-gray-500 dark:text-slate-400">Carregando...</p>
       </div>
     );
   }
 
   if (!apostasAtivas) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-white px-4">
-        <div className="max-w-md rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
-          <h1 className="mb-2 text-lg font-bold text-amber-800">
-            Apostas temporariamente desativadas
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-amber-50 to-white px-4 dark:from-amber-950/40 dark:to-slate-950">
+        <div className="max-w-md rounded-3xl border border-amber-200 bg-white p-8 text-center shadow-xl dark:border-amber-800 dark:bg-slate-800">
+          <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-900/40">
+            <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><path strokeLinecap="round" d="M12 8v4M12 16h.01"/></svg>
+          </div>
+          <h1 className="mb-2 text-lg font-bold text-amber-800 dark:text-amber-200">
+            Apostas pausadas
           </h1>
-          <p className="text-sm text-amber-700">
-            No momento não é possível realizar novas apostas. Entre em contato
-            com o administrador da banca para mais informações.
+          <p className="text-sm text-amber-700 dark:text-amber-300">
+            No momento o administrador desativou as apostas. Procure-o para mais informações.
           </p>
+          <Link href="/cliente" className="mt-6 inline-block w-full rounded-xl bg-amber-600 py-3 font-semibold text-white hover:bg-amber-700">
+            Voltar ao início
+          </Link>
         </div>
       </div>
     );
@@ -429,28 +738,28 @@ export default function ClienteVenderPage() {
   const saldoDisp = getSaldoDisponivel(cambista);
   if (saldoDisp <= 0 && step === "extracao") {
     return (
-      <div className="min-h-screen bg-white p-4 pb-24">
+      <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white p-4 pb-24 dark:from-slate-950 dark:to-slate-900">
         <div className="mb-4 flex items-center gap-2">
           <button
-            onClick={() => router.back()}
-            className="rounded p-2 text-gray-600 hover:bg-gray-100"
+            onClick={() => router.push("/cliente")}
+            className="rounded p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
             aria-label="Voltar"
           >
             <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <h1 className="text-lg font-bold text-gray-800">Vender</h1>
+          <h1 className="text-lg font-bold text-slate-800 dark:text-slate-100">Vender</h1>
         </div>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-center dark:border-amber-800 dark:bg-amber-950/40">
           <p className="text-4xl mb-4">⚠️</p>
-          <h2 className="text-lg font-bold text-amber-800">Saldo zerado</h2>
-          <p className="mt-2 text-amber-700">
+          <h2 className="text-lg font-bold text-amber-800 dark:text-amber-200">Saldo zerado</h2>
+          <p className="mt-2 text-amber-800 dark:text-amber-200/90">
             Você não tem limite disponível para realizar vendas. Peça ao administrador para adicionar saldo.
           </p>
           <button
-            onClick={() => router.back()}
-            className="mt-6 w-full rounded-xl bg-amber-600 py-3 font-semibold text-white"
+            onClick={() => router.push("/cliente")}
+            className="mt-6 w-full rounded-xl bg-amber-600 py-3 font-semibold text-white hover:bg-amber-700"
           >
             Voltar
           </button>
@@ -461,23 +770,28 @@ export default function ClienteVenderPage() {
 
   if (sucesso) {
     return (
-      <div className="min-h-screen bg-white p-4 pb-24">
-        <div className="mx-auto max-w-md rounded-xl bg-green-50 p-6 text-center">
-          <p className="text-4xl mb-4">✅</p>
-          <h2 className="text-xl font-bold text-gray-800">Venda realizada!</h2>
-          <p className="mt-2 text-gray-600">Código do bilhete: <strong>{sucesso.codigo}</strong></p>
-          <div className="mt-6 flex gap-3">
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-emerald-50 to-white p-4 pb-24 dark:from-slate-900 dark:to-slate-950">
+        <div className="mx-auto w-full max-w-md rounded-3xl border border-emerald-100 bg-white p-8 text-center shadow-xl dark:border-slate-700 dark:bg-slate-800">
+          <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/40">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} className="h-10 w-10 text-emerald-600 dark:text-emerald-400">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Venda realizada!</h2>
+          <p className="mt-2 text-slate-600 dark:text-slate-300">Código do bilhete</p>
+          <p className="mt-1 font-mono text-3xl font-extrabold tracking-wide text-emerald-600">{sucesso.codigo}</p>
+          <div className="mt-8 flex gap-3">
             <button
               onClick={() => setSucesso(null)}
-              className="flex-1 rounded-xl bg-green-600 py-3 font-semibold text-white"
+              className="flex-1 rounded-xl bg-emerald-600 py-3 font-semibold text-white shadow-md hover:bg-emerald-700"
             >
               Nova venda
             </button>
             <Link
-              href="/cliente"
-              className="flex-1 rounded-xl border border-gray-300 py-3 font-semibold text-gray-700"
+              href="/cliente/bilhete"
+              className="flex-1 rounded-xl border border-slate-300 py-3 font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300"
             >
-              Início
+              Ver bilhete
             </Link>
           </div>
         </div>
@@ -486,30 +800,81 @@ export default function ClienteVenderPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white p-4 pb-24">
-      <div className="mb-4 flex items-center gap-2">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white pb-28 dark:from-slate-950 dark:to-slate-900">
+      <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-slate-200/60 bg-white/85 px-4 py-3 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/85">
         <button
           onClick={voltar}
-          className="rounded p-2 text-gray-600 hover:bg-gray-100"
+          className="rounded-full p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
           aria-label="Voltar"
         >
-          <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2.2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
           </svg>
         </button>
-        <h1 className="text-lg font-bold text-gray-800">Vender</h1>
-      </div>
+        <div className="flex-1">
+          <h1 className="text-base font-bold text-slate-800 dark:text-slate-100">Nova aposta</h1>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            {step === "extracao" ? "Passo 1 · escolha a extração" :
+             step === "modalidade" ? "Passo 2 · escolha a modalidade" :
+             step === "variante" ? "Passo 2 · escolha a variante" :
+             step === "numeros" ? "Passo 3 · informe os números" :
+             step === "premio" ? "Passo 4 · escolha o prêmio" :
+             step === "milharBrinde" ? "Passo 5 · milhar brinde" :
+             step === "valor" ? "Passo 6 · valor" :
+             step === "carrinho" ? `Bilhete com ${carrinho.length} jogo(s)` :
+             "Confirmação"}
+          </p>
+        </div>
 
+        {/* Indicador do carrinho — sempre visível quando há itens */}
+        {carrinho.length > 0 && step !== "carrinho" && (
+          <button
+            type="button"
+            onClick={() => setStep("carrinho")}
+            className="relative inline-flex items-center gap-1.5 rounded-full border-2 border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-sm hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200"
+            aria-label="Ver carrinho"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13l-2-8M7 13l-1.6 4M17 13l1.6 4M9 21a1 1 0 100-2 1 1 0 000 2zm9 0a1 1 0 100-2 1 1 0 000 2z"/>
+            </svg>
+            {carrinho.length}
+            <span className="hidden sm:inline">{carrinho.length === 1 ? "jogo" : "jogos"}</span>
+          </button>
+        )}
+      </header>
+
+      <div className="p-4">
       {erro && (
-        <div className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-600">{erro}</div>
+        <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-900/30 dark:text-rose-200">
+          <svg className="mt-0.5 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <circle cx="12" cy="12" r="10"/><path strokeLinecap="round" d="M12 8v4M12 16h.01"/>
+          </svg>
+          {erro}
+        </div>
+      )}
+
+      {/* Banner discreto: você está montando um bilhete com X jogos */}
+      {carrinho.length > 0 && step !== "carrinho" && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">
+          <span>
+            <strong>{carrinho.length}</strong> {carrinho.length === 1 ? "jogo adicionado" : "jogos adicionados"} ao bilhete. Você pode incluir mais.
+          </span>
+          <button
+            type="button"
+            onClick={() => setStep("carrinho")}
+            className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
+          >
+            Ver carrinho
+          </button>
+        </div>
       )}
 
       {/* Step: Extração */}
       {step === "extracao" && (
         <div>
-          <p className="mb-4 text-gray-600">Escolha a extração:</p>
+          <p className="mb-4 text-slate-700 dark:text-slate-200">Escolha a extração:</p>
           {extracoes.length === 0 && (
-            <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Nenhuma loteria disponível no momento (todas já passaram do horário ou estão inativas).</p>
+            <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">Nenhuma loteria disponível no momento (todas já passaram do horário ou estão inativas).</p>
           )}
           <div className="space-y-2">
             {extracoes.map((e) => {
@@ -521,12 +886,12 @@ export default function ClienteVenderPage() {
                   disabled={!aceita}
                   className={`w-full rounded-xl px-4 py-4 text-left transition ${
                     aceita
-                      ? "bg-gray-100 hover:bg-gray-200 text-gray-800"
-                      : "bg-gray-50 text-gray-400 cursor-not-allowed"
+                      ? "bg-slate-100 text-slate-900 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                      : "cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-slate-900/60 dark:text-slate-600"
                   }`}
                 >
                   <span className="font-medium">{e.nome}</span>
-                  <span className="ml-2 text-sm">
+                  <span className="ml-2 text-sm text-slate-600 dark:text-slate-300">
                     {aceita ? `Encerra às ${e.encerra}` : "Tempo excedido"}
                   </span>
                 </button>
@@ -539,8 +904,8 @@ export default function ClienteVenderPage() {
       {/* Step: Modalidade (12 opções — oculta as desativadas no admin) */}
       {step === "modalidade" && extracao && (
         <div>
-          <p className="mb-2 text-sm text-gray-500">{extracao.nome}</p>
-          <p className="mb-4 text-gray-600">Escolha a modalidade:</p>
+          <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">{extracao.nome}</p>
+          <p className="mb-4 text-slate-700 dark:text-slate-200">Escolha a modalidade:</p>
           <div className="flex flex-col gap-3">
             {MODALIDADES_TELA.filter((m) => {
               if (m.key) return modalidadePodeApostar(modalidadesCfg?.[m.key]);
@@ -553,7 +918,7 @@ export default function ClienteVenderPage() {
                   key={m.label}
                   type="button"
                   onClick={() => m.key ? escolherModalidadeKey(m.key) : escolherModalidadeComVariante(index)}
-                  className="w-full rounded-xl bg-sky-100 px-4 py-4 text-left font-bold text-gray-900 hover:bg-sky-200"
+                  className="w-full rounded-xl bg-sky-100 px-4 py-4 text-left font-bold text-slate-900 hover:bg-sky-200 dark:bg-sky-900/45 dark:text-sky-50 dark:hover:bg-sky-900/70"
                 >
                   {m.label}
                 </button>
@@ -566,17 +931,18 @@ export default function ClienteVenderPage() {
       {/* Step: Variante (1/2, 1/5, 1/3, 1/10 — oculta as desativadas no admin) */}
       {step === "variante" && modalidadeGroupIndex !== null && (
         <div>
-          <p className="mb-2 text-sm text-gray-500">{extracao?.nome} → {MODALIDADES_TELA[modalidadeGroupIndex]?.label}</p>
-          <p className="mb-4 text-gray-600">Escolha o prêmio:</p>
+          <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">{extracao?.nome} → {MODALIDADES_TELA[modalidadeGroupIndex]?.label}</p>
+          <p className="mb-4 text-slate-700 dark:text-slate-200">Escolha o prêmio:</p>
           <div className="flex flex-col gap-3">
             {MODALIDADES_TELA[modalidadeGroupIndex]?.variantes
               ?.filter((v) => modalidadePodeApostar(modalidadesCfg?.[v.key]))
+              .filter((v) => premioFixoDentroDoLimite(v.label))
               .map((v) => (
                 <button
                   key={v.key}
                   type="button"
                   onClick={() => escolherModalidadeKey(v.key)}
-                  className="w-full rounded-xl bg-sky-100 px-4 py-4 text-left font-bold text-gray-900 hover:bg-sky-200"
+                  className="w-full rounded-xl bg-sky-100 px-4 py-4 text-left font-bold text-slate-900 hover:bg-sky-200 dark:bg-sky-900/45 dark:text-sky-50 dark:hover:bg-sky-900/70"
                 >
                   {v.label}
                 </button>
@@ -588,25 +954,41 @@ export default function ClienteVenderPage() {
       {/* Step: Números */}
       {step === "numeros" && modalidade && (
         <div>
-          <p className="mb-2 text-sm text-gray-500">{extracao?.nome} → {COTACOES_LABELS[modalidade] ?? modalidade}</p>
-          <p className="mb-2 text-gray-600">
+          <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">{extracao?.nome} → {COTACOES_LABELS[modalidade] ?? modalidade}</p>
+          <p className="mb-3 text-slate-700 dark:text-slate-200">
             {getModalidadeConfig(modalidade).count > 1
-              ? `Digite ${getModalidadeConfig(modalidade).count} números separados por espaço (ou mais, para vários jogos):`
-              : "Digite um ou mais números. Use Espaço para adicionar outro:"}
+              ? `Digite os ${getModalidadeConfig(modalidade).count} números deste tipo de jogo.`
+              : `Digite o palpite. Pode seguir digitando para adicionar outros, ou toque em Continuar quando terminar.`}
           </p>
-          <div className="mb-4 flex min-h-14 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-50 px-2 py-3 text-xl font-mono font-bold break-all text-center text-black">
+          {(() => {
+            const lista = todosPalpitesNumeros(numeros.trim());
+            if (lista.length === 0 && !numeros.trim()) return null;
+            return (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {lista.map((p, i) => (
+                  <span
+                    key={`${i}-${p}`}
+                    className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-bold tabular-nums text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
+                  >
+                    {p}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
+          <div className="mb-4 flex min-h-14 items-center justify-center rounded-xl border-2 border-slate-200 bg-slate-50 px-2 py-3 text-center text-xl font-mono font-bold break-all text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50">
             {numeros || "—"}
           </div>
-          <div className="mb-2 flex items-center justify-end text-sm text-gray-500">
-            {numeros.trim().split(/\s+/).filter(Boolean).length} jogo(s)
+          <div className="mb-2 flex items-center justify-end text-sm text-slate-600 dark:text-slate-400">
+            {contarPalpitesNumeros(numeros.trim())} palpite(s)
           </div>
-          <div className="grid grid-cols-3 gap-3 mb-4">
+          <div className="mb-4 grid grid-cols-3 gap-3">
             {["1", "2", "3", "4", "5", "6", "7", "8", "9", "Espaço", "0", "⌫"].map((d) => (
               <button
                 key={d || "empty"}
                 onClick={() => (d === "⌫" ? apagarDigito() : adicionarDigito(d === "Espaço" ? " " : d))}
                 disabled={d === ""}
-                className="rounded-xl bg-gray-100 py-4 text-xl font-medium text-gray-800 hover:bg-gray-200 disabled:invisible"
+                className="rounded-xl bg-slate-100 py-4 text-xl font-medium text-slate-900 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 disabled:invisible"
               >
                 {d}
               </button>
@@ -624,12 +1006,14 @@ export default function ClienteVenderPage() {
       {/* Step: Prêmio (digitar ex: 1/5 = 1º ao 5º) */}
       {step === "premio" && (
         <div>
-          <p className="mb-2 text-sm text-gray-500">
+          <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
             {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros}
           </p>
-          <p className="mb-2 text-gray-600">Em qual(is) prêmio(s) vale este jogo?</p>
-          <p className="mb-4 text-sm text-gray-500">Exemplo: 1/5 = do 1º ao 5º prêmio (digite e a barra aparece)</p>
-          <div className="mb-4 flex min-h-14 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-50 px-2 py-3 text-2xl font-mono font-bold text-black">
+          <p className="mb-2 text-slate-700 dark:text-slate-200">Em qual(is) prêmio(s) vale este jogo?</p>
+          <p className="mb-4 text-sm text-slate-600 dark:text-slate-400">
+            Esta loteria permite até 1/{premioMax}. Exemplo: 1/5 = do 1º ao 5º prêmio.
+          </p>
+          <div className="mb-4 flex min-h-14 items-center justify-center rounded-xl border-2 border-slate-200 bg-slate-50 px-2 py-3 text-center text-2xl font-mono font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50">
             {premio || "—"}
           </div>
           <div className="mb-4 grid grid-cols-3 gap-3">
@@ -639,7 +1023,7 @@ export default function ClienteVenderPage() {
                 type="button"
                 onClick={() => d && adicionarDigitoPremio(d)}
                 disabled={d === ""}
-                className="rounded-xl bg-gray-100 py-4 text-xl font-medium text-gray-800 hover:bg-gray-200 disabled:invisible"
+                className="rounded-xl bg-slate-100 py-4 text-xl font-medium text-slate-900 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 disabled:invisible"
               >
                 {d === "⌫" ? "⌫" : d}
               </button>
@@ -657,65 +1041,60 @@ export default function ClienteVenderPage() {
       {/* Step: Milhar Brinde (opcional) - só se cambista habilitou */}
       {step === "milharBrinde" && mostraMilharBrinde && (
         <div>
-          <p className="mb-2 text-sm text-gray-500">
+          <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
             {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros}
           </p>
-          <p className="mb-4 text-gray-600">Milhar brinde (opcional) – 4 dígitos:</p>
-          <div className="mb-4 flex h-14 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-50 text-2xl font-mono font-bold text-black">
+          <p className="mb-2 text-slate-700 dark:text-slate-200">Milhar brinde – 4 dígitos:</p>
+          <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
+            Já geramos uma milhar aleatória. Para trocar, apague e digite outra.
+          </p>
+          <div className="mb-4 flex h-14 items-center justify-center rounded-xl border-2 border-slate-200 bg-slate-50 text-2xl font-mono font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50">
             {milharBrinde || "—"}
           </div>
-          <div className="grid grid-cols-3 gap-3 mb-4">
+          <div className="mb-4 grid grid-cols-3 gap-3">
             {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map((d) => (
               <button
                 key={d}
                 onClick={() => adicionarDigitoMilharBrinde(d)}
                 disabled={d === ""}
-                className="rounded-xl bg-gray-100 py-4 text-xl font-medium text-gray-800 hover:bg-gray-200 disabled:invisible"
+                className="rounded-xl bg-slate-100 py-4 text-xl font-medium text-slate-900 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 disabled:invisible"
               >
                 {d}
               </button>
             ))}
           </div>
-          <div className="flex gap-3">
-            <button
-              onClick={pularMilharBrinde}
-              className="flex-1 rounded-xl border border-gray-300 py-3 font-semibold text-gray-700"
-            >
-              Pular
-            </button>
-            <button
-              onClick={confirmarMilharBrinde}
-              className="flex-1 rounded-xl bg-green-600 py-3 font-semibold text-white"
-            >
-              Continuar
-            </button>
-          </div>
+          <button
+            onClick={confirmarMilharBrinde}
+            className="w-full rounded-xl bg-green-600 py-3 font-semibold text-white"
+          >
+            Prosseguir
+          </button>
         </div>
       )}
 
       {/* Step: Valor */}
       {step === "valor" && cambista && (
         <div>
-          <p className="mb-2 text-sm text-gray-500">
+          <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
             {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros} — prêmio {premio}
-            {milharBrinde && <span className="text-green-600"> + Brinde {milharBrinde}</span>}
+            {milharBrinde && <span className="text-green-600 dark:text-green-400"> + Brinde {milharBrinde}</span>}
           </p>
-          <p className="mb-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">
+          <p className="mb-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">
             Disponível para venda: <strong>{formatarMoeda(getSaldoDisponivel(cambista))}</strong>
           </p>
           {getSaldoDisponivel(cambista) <= 0 && (
-            <p className="mb-4 rounded-lg bg-red-50 p-2 text-sm text-red-600">
+            <p className="mb-4 rounded-lg bg-red-50 p-2 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-300">
               Saldo zerado. Peça ao administrador para adicionar limite antes de vender.
             </p>
           )}
-          <p className="mb-2 text-gray-600">Valor da aposta (R$):</p>
+          <p className="mb-2 text-slate-700 dark:text-slate-200">Valor da aposta (R$):</p>
           <input
             type="text"
             inputMode="decimal"
             placeholder="0,00"
             value={valor}
             onChange={(e) => setValor(e.target.value.replace(/[^0-9,]/g, ""))}
-            className="mb-4 w-full rounded-xl border border-gray-300 px-4 py-4 text-xl font-medium"
+            className="mb-4 w-full rounded-xl border border-slate-300 bg-white px-4 py-4 text-xl font-medium text-slate-900 placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50 dark:placeholder:text-slate-500"
           />
           {qtdJogos > 1 && (
             <div className="mb-4 grid grid-cols-2 gap-3">
@@ -724,65 +1103,196 @@ export default function ClienteVenderPage() {
                 onClick={() => setValorModo("dividir")}
                 className={`rounded-xl border-2 p-4 text-left transition ${
                   valorModo === "dividir"
-                    ? "border-green-500 bg-green-50 text-green-800"
-                    : "border-gray-200 bg-gray-50 text-gray-600"
+                    ? "border-green-500 bg-green-50 text-green-800 dark:border-green-500 dark:bg-green-950/40 dark:text-green-200"
+                    : "border-slate-200 bg-slate-50 text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
                 }`}
               >
                 <div className="text-sm font-medium">Dividir</div>
-                <div className="text-lg font-bold">{formatarMoeda(valorTotal)}</div>
-                <div className="text-xs text-gray-500">Total ÷ {qtdJogos} = {formatarMoeda(valorPorJogo)}/jogo</div>
+                <div className="text-lg font-bold">{formatarMoeda(valorPorJogoDividir)}</div>
+                <div className="text-xs text-slate-600 dark:text-slate-400">
+                  {formatarMoeda(valorTotalDividir)} ÷ {qtdJogos} jogos
+                </div>
               </button>
               <button
                 type="button"
                 onClick={() => setValorModo("multiplicar")}
                 className={`rounded-xl border-2 p-4 text-left transition ${
                   valorModo === "multiplicar"
-                    ? "border-green-500 bg-green-50 text-green-800"
-                    : "border-gray-200 bg-gray-50 text-gray-600"
+                    ? "border-green-500 bg-green-50 text-green-800 dark:border-green-500 dark:bg-green-950/40 dark:text-green-200"
+                    : "border-slate-200 bg-slate-50 text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
                 }`}
               >
                 <div className="text-sm font-medium">Multiplicar</div>
-                <div className="text-lg font-bold">{formatarMoeda(valorTotal)}</div>
-                <div className="text-xs text-gray-500">{formatarMoeda(valorDigitado)} × {qtdJogos} jogos</div>
+                <div className="text-lg font-bold">{formatarMoeda(valorTotalMultiplicar)}</div>
+                <div className="text-xs text-slate-600 dark:text-slate-400">
+                  {formatarMoeda(valorDigitado)} × {qtdJogos} jogos
+                </div>
               </button>
             </div>
           )}
-          <p className="mb-4 text-sm text-gray-500">
+          <p className="mb-4 text-sm text-slate-600 dark:text-slate-400">
             Cotação: {formatarMoeda(getCotacaoEfetiva(cambista, modalidade!))} (se ganhar)
           </p>
           <button
             onClick={confirmarValor}
             disabled={getSaldoDisponivel(cambista) <= 0 || valorTotal <= 0}
-            className="w-full rounded-xl bg-green-600 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 py-3 font-semibold text-white shadow-md transition-all active:scale-[0.99] disabled:cursor-not-allowed disabled:from-slate-400 disabled:to-slate-400"
           >
-            Continuar
+            {carrinho.length === 0 ? "Adicionar ao bilhete" : `Adicionar como jogo ${carrinho.length + 1}`}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-4 w-4">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14"/>
+            </svg>
           </button>
+          <p className="mt-2 text-center text-[11px] text-slate-500 dark:text-slate-400">
+            Você pode adicionar vários jogos antes de finalizar o bilhete. A milhar brinde é permitida apenas uma vez por bilhete.
+          </p>
         </div>
       )}
 
-      {/* Step: Confirmar */}
-      {step === "confirmar" && cambista && (
+      {/* Step: Carrinho — lista de jogos já adicionados + opção dividir/multiplicar */}
+      {step === "carrinho" && cambista && extracao && (
         <div>
-          <div className="mb-4 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">
-            Disponível: <strong>{formatarMoeda(getSaldoDisponivel(cambista))}</strong>
+          <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h14a2 2 0 012 2v3h-4a3 3 0 100 6h4v3a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+            </svg>
+            <span>Disponível: <strong>{formatarMoeda(getSaldoDisponivel(cambista))}</strong></span>
+            <span className="ml-auto text-xs text-emerald-800/80 dark:text-emerald-300/90">{extracao.nome}</span>
           </div>
-          <div className="mb-6 rounded-xl border border-gray-200 p-4">
-            <p className="text-sm text-gray-500">{extracao?.nome}</p>
-            <p className="mt-1 font-medium">
-              {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros} (prêmio {premio})
-              {milharBrinde && <span className="text-green-600"> + Brinde {milharBrinde}</span>}
-              {" – "}{formatarMoeda(valorTotal)}
-            </p>
-          </div>
-          <button
-            onClick={finalizarVenda}
-            disabled={!podeRealizarVenda(cambista.id, valorTotal).ok}
-            className="w-full rounded-xl bg-green-600 py-4 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Finalizar venda
-          </button>
+
+          {carrinho.length === 0 ? (
+            <div className="rounded-2xl border-2 border-dashed border-slate-200 p-8 text-center dark:border-slate-700">
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                Nenhum jogo no bilhete ainda.
+              </p>
+              <button
+                type="button"
+                onClick={adicionarOutroJogo}
+                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 font-semibold text-white shadow hover:bg-emerald-700"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-5 w-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14"/>
+                </svg>
+                Adicionar primeiro jogo
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Modo do bilhete (só aparece com 2+ jogos) */}
+              {carrinho.length >= 2 && (
+                <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Como aplicar o valor?</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setModoBilhete("individual")}
+                      className={`rounded-xl border-2 p-3 text-left transition ${
+                        modoBilhete === "individual"
+                          ? "border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200"
+                          : "border-slate-200 bg-white text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                      }`}
+                    >
+                      <div className="text-sm font-semibold">Valor em cada</div>
+                      <div className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
+                        Cada jogo mantém o valor que você digitou.
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModoBilhete("dividir_total")}
+                      className={`rounded-xl border-2 p-3 text-left transition ${
+                        modoBilhete === "dividir_total"
+                          ? "border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200"
+                          : "border-slate-200 bg-white text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                      }`}
+                    >
+                      <div className="text-sm font-semibold">Dividir entre os jogos</div>
+                      <div className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
+                        Soma R$ {carrinho.reduce((s, c) => s + c.valorDigitado, 0).toFixed(2).replace(".", ",")} ÷ {carrinho.length} jogos.
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Lista de itens */}
+              <div className="space-y-2">
+                {carrinho.map((c, i) => {
+                  const label = COTACOES_LABELS[c.modalidade] ?? c.modalidade;
+                  const qtd = c.numeros.trim().split(/\s+/).filter(Boolean).length || 1;
+                  const v = valoresFinais[i] ?? 0;
+                  return (
+                    <div key={i} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-800">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                        <span className="text-sm font-bold">{i + 1}</span>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                          {label} <span className="text-xs font-normal text-slate-600 dark:text-slate-400">· {c.premio}</span>
+                        </p>
+                        <p className="truncate font-mono text-base font-bold text-emerald-600 dark:text-emerald-400">{c.numeros}</p>
+                        {qtd > 1 && (
+                          <p className="text-[10px] text-slate-600 dark:text-slate-400">
+                            {qtd} palpites · {modoBilhete === "individual" ? (c.valorModo === "dividir" ? "valor dividido entre eles" : "valor em cada") : "rateio pelo bilhete"}
+                          </p>
+                        )}
+                        {c.milharBrinde && <p className="text-[10px] text-emerald-600">Brinde: {c.milharBrinde}</p>}
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-extrabold text-slate-900 dark:text-white">{formatarMoeda(v)}</p>
+                        <button
+                          type="button"
+                          onClick={() => removerItemCarrinho(i)}
+                          className="mt-1 text-[10px] font-medium text-rose-600 hover:underline"
+                        >
+                          remover
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Total */}
+              <div className="mt-4 flex items-baseline justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-900/50">
+                <span className="text-sm text-slate-600 dark:text-slate-400">Total do bilhete</span>
+                <span className="text-2xl font-extrabold text-slate-900 dark:text-white">{formatarMoeda(totalBilhete)}</span>
+              </div>
+
+              {/* Ações — adicionar mais é a ação primária; finalizar fica como CTA secundária ao lado */}
+              <div className="mt-4 space-y-2">
+                <button
+                  type="button"
+                  onClick={adicionarOutroJogo}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-emerald-400 bg-emerald-50 py-3.5 text-base font-bold text-emerald-700 transition-colors hover:bg-emerald-100 dark:border-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} className="h-5 w-5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14"/>
+                  </svg>
+                  Adicionar outro jogo
+                </button>
+                <button
+                  type="button"
+                  onClick={finalizarVenda}
+                  disabled={enviandoVenda || !podeRealizarVenda(cambista.id, totalBilhete).ok}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 py-3.5 text-base font-bold text-white shadow-lg shadow-emerald-500/30 transition-all active:scale-[0.99] disabled:cursor-not-allowed disabled:from-slate-400 disabled:to-slate-400 disabled:shadow-none"
+                >
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/>
+                  </svg>
+                  {enviandoVenda ? "Gerando bilhete…" : "Finalizar e gerar bilhete"}
+                </button>
+                <p className="text-center text-[11px] text-slate-500 dark:text-slate-400">
+                  {carrinho.length === 1
+                    ? "Você pode adicionar mais jogos da mesma extração antes de finalizar."
+                    : `${carrinho.length} jogos no bilhete. Adicione quantos quiser.`}
+                </p>
+              </div>
+            </>
+          )}
         </div>
       )}
+      </div>
     </div>
   );
 }

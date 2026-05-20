@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { getSorteios } from "@/lib/store";
+import { formatarDataBr } from "@/lib/date-utils";
 
 export default function ClienteSorteiosPage() {
   const router = useRouter();
@@ -12,7 +13,7 @@ export default function ClienteSorteiosPage() {
   useEffect(() => {
     const auth = localStorage.getItem("premiacoes_cliente");
     if (!auth) {
-      router.replace("/cliente/login");
+      router.replace("/cliente");
       return;
     }
     setSorteios(getSorteios().filter((s) => s.ativo));
@@ -24,7 +25,7 @@ export default function ClienteSorteiosPage() {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => router.back()}
+            onClick={() => router.push("/cliente")}
             className="rounded p-2 text-gray-600 hover:bg-gray-100"
             aria-label="Voltar"
           >
@@ -56,7 +57,7 @@ export default function ClienteSorteiosPage() {
                 className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
               >
                 <h2 className="font-semibold text-gray-800">{s.nome}</h2>
-                <p className="mt-1 text-sm text-gray-500">Data: {s.data}</p>
+                <p className="mt-1 text-sm text-gray-500">Data: {formatarDataBr(s.data)}</p>
                 {s.descricao && (
                   <p className="mt-2 text-sm text-gray-600 whitespace-pre-wrap">{s.descricao}</p>
                 )}

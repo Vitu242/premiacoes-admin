@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { getConfig, setConfig, getInstantaneaStats, limparInstantaneaStats } from "@/lib/store";
 import { addLog } from "@/lib/auditoria";
 import { useVisibilityRefresh } from "@/lib/use-config-refresh";
+import LoteriasTabs from "@/app/components/LoteriasTabs";
 
 function formatarMoeda(v: number) {
   return new Intl.NumberFormat("pt-BR", {
@@ -47,7 +48,10 @@ export default function InstantaneaPage() {
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-bold text-gray-800">Loteria Instantânea</h1>
+      <h1 className="mb-6 text-2xl font-bold text-gray-800">Loterias</h1>
+      <LoteriasTabs />
+
+      <h2 className="mb-6 text-xl font-bold text-gray-800">Loteria Instantânea</h2>
 
       {mensagem && (
         <p

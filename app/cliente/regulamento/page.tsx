@@ -34,7 +34,7 @@ export default function ClienteRegulamentoPage() {
       <div className="mb-4 flex items-center gap-2">
         <button
           type="button"
-          onClick={() => router.back()}
+          onClick={() => router.push("/cliente")}
           className="rounded p-2 text-gray-600 hover:bg-gray-100"
           aria-label="Voltar"
         >

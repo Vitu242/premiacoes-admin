@@ -1,18 +1,18 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
 import {
   getGerentesPorCodigo,
-  setGerentes,
   addGerente,
   updateGerente,
   deleteGerente,
-  getCambistas,
 } from "@/lib/store";
 import { getAdminCodigo } from "@/lib/auth";
 import { addLog } from "@/lib/auditoria";
+import { normalizeLoginKey } from "@/lib/login-normalize";
 import type { Gerente } from "@/lib/types";
+import { formatarDataHoraBr } from "@/lib/date-utils";
+import { useToast } from "@/app/components/Toast";
 
 function gerenteInicial(codigo: string): Omit<Gerente, "id" | "criadoEm"> {
   return {
@@ -34,6 +34,7 @@ function gerenteInicial(codigo: string): Omit<Gerente, "id" | "criadoEm"> {
 }
 
 export default function GerentesPage() {
+  const toast = useToast();
   const codigo = getAdminCodigo();
   const [gerentes, setGerentesState] = useState<Gerente[]>([]);
   const [filtro, setFiltro] = useState("");
@@ -46,7 +47,7 @@ export default function GerentesPage() {
   }, [codigo]);
 
   const filtrar = gerentes.filter((g) =>
-    g.login.toLowerCase().includes(filtro.toLowerCase())
+    normalizeLoginKey(g.login).includes(normalizeLoginKey(filtro))
   );
 
   const abrirEditar = (g: Gerente) => {
@@ -79,18 +80,20 @@ export default function GerentesPage() {
   const salvar = () => {
     if (novo) {
       if (!form.login.trim()) {
-        alert("Preencha o login.");
+        toast.error("Preencha o login do gerente.");
         return;
       }
       addGerente(form);
       addLog("Criou gerente", form.login);
+      toast.success(`Gerente ${form.login} criado!`);
     } else if (editando) {
       if (!form.login.trim()) {
-        alert("Preencha o login.");
+        toast.error("Preencha o login do gerente.");
         return;
       }
       updateGerente(editando.id, form);
       addLog("Atualizou gerente", form.login);
+      toast.success(`Gerente ${form.login} atualizado!`);
     }
     setGerentesState(getGerentesPorCodigo(codigo ?? ""));
     setEditando(null);
@@ -104,6 +107,7 @@ export default function GerentesPage() {
       addLog("Apagou gerente", g?.login ?? id);
       setGerentesState(getGerentesPorCodigo(codigo ?? ""));
       setEditando(null);
+      toast.success(`Gerente ${g?.login ?? "—"} apagado.`);
     }
   };
 
@@ -196,7 +200,7 @@ export default function GerentesPage() {
               {!novo && (
                 <div>
                   <label className="text-sm text-gray-600">Criado em:</label>
-                  <p className="text-sm">{editando?.criadoEm}</p>
+                  <p className="text-sm">{editando?.criadoEm ? formatarDataHoraBr(editando.criadoEm) : ""}</p>
                 </div>
               )}
               <div>

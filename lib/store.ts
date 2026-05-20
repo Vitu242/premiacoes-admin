@@ -1,7 +1,7 @@
 "use client";
 
-import type { Gerente, Cambista, Extracao, Bilhete, ItemBilhete, Lancamento, Resultado, ModalidadeBilhete, Sorteio } from "./types";
-import { pushToSupabase, useSupabase, pushConfigToSupabase } from "./sync-supabase";
+import type { Gerente, Cambista, Extracao, Bilhete, Lancamento, Resultado, Sorteio } from "./types";
+import { pushToSupabase, useSupabase, pushConfigToSupabase, deleteFromSupabase } from "./sync-supabase";
 import { CODIGO_CHEFE } from "./auth";
 import {
   COTACOES_PADROES_DEFAULT,
@@ -10,6 +10,13 @@ import {
 } from "./cotacoes";
 import { getExtracoesPadrao } from "./extracoes-padrao";
 import { conferirBilhete, getPremioDivisor } from "./conferencia";
+import { parseDataPtBrOuIso as parseData } from "./date-utils";
+import {
+  ordenarBilhetesRecentesPrimeiro,
+  ordenarPorLogin,
+} from "./list-order";
+import { normalizeLogin } from "./login-normalize";
+import { addTombstone, getTombstoneSet } from "./tombstones";
 
 const GERENTES_KEY = "premiacoes_gerentes";
 const CAMBISTAS_KEY = "premiacoes_cambistas";
@@ -21,6 +28,25 @@ const SORTEIOS_KEY = "premiacoes_sorteios";
 const CONFIG_KEY = "premiacoes_config";
 const COTACOES_PADROES_KEY = "premiacoes_cotacoes_padroes";
 
+/**
+ * Flag para impedir re-seed automático de gerente/cambista iniciais
+ * depois que o usuário já apagou tudo. Marcada na primeira inicialização
+ * e logo após qualquer sincronização com o Supabase em `initFromSupabase`.
+ */
+const SEED_FLAG_KEY = "premiacoes_seeded_v1";
+function jaInicializou(): boolean {
+  if (typeof window === "undefined") return true;
+  return localStorage.getItem(SEED_FLAG_KEY) === "1";
+}
+export function marcarBancaInicializada(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(SEED_FLAG_KEY, "1");
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Comissões padrão usadas ao criar novo cambista. */
 export interface ComissoesPadrao {
   comissaoMilhar: number;
@@ -31,18 +57,20 @@ export interface ComissoesPadrao {
 
 /** Configuração global de Milhar Brinde */
 export interface MilharBrindeGlobal {
-  /** "nao" = desativado; "valor_fixo" = prêmio fixo; "valor_multiplicado" = multiplica o valor apostado */
+  /** "nao" = desativado; "valor_fixo" = prêmio fixo. "valor_multiplicado" é legado. */
   tipo: "nao" | "valor_fixo" | "valor_multiplicado";
-  /** Valor mínimo da aposta para ativar (quando tipo !== "nao") */
+  /** Legado: mantido apenas para compatibilidade com dados já salvos. */
   valorMinimoAtivar?: number;
-  /** Prêmio fixo em R$ quando tipo === "valor_fixo" */
+  /** Prêmio fixo em R$ pago quando a milhar brinde bate no 1º prêmio (1/1). */
   premioFixo?: number;
 }
 
 export interface AppConfig {
   tempoCancelamentoMinutos: number;
-  /** Até qual prêmio o cliente pode apostar: 5 = só 1/5, 10 = até 1/10 */
+  /** Legado/fallback global: até qual prêmio o cliente pode apostar. */
   premioMax: 5 | 10;
+  /** Configuração por extração/loteria: 5 = até 1/5, 10 = até 1/10. */
+  premioMaxPorExtracao?: Record<string, 5 | 10>;
   /** Se falso, o cliente não pode realizar novas apostas. */
   apostasAtivas: boolean;
   /** Texto impresso/exibido ao final do bilhete para o cliente. */
@@ -63,6 +91,20 @@ export interface AppConfig {
   gerentePodeCancelarAposta?: boolean;
   /** Percentual de lucro da banca na loteria instantânea (0–100). */
   lucroBancaInstantaneaPercent?: number;
+  /**
+   * Configuração por modalidade (chave = nome da modalidade como em
+   * `COTACOES_KEYS_ORDER`): valor mínimo/máximo aceito e status (ativa,
+   * desbloqueado ou bloqueada). Utilizado pela tela de venda do cliente.
+   */
+  modalidades?: Record<
+    string,
+    {
+      minValor?: number;
+      maxValor?: number;
+      ativa?: boolean;
+      status?: "ativa" | "desbloqueado" | "bloqueada";
+    }
+  >;
 }
 
 /** Estatísticas da loteria instantânea (Venda, Prêmio, Comissão). */
@@ -82,6 +124,7 @@ const COMISSOES_PADRAO_DEFAULT: ComissoesPadrao = {
 const CONFIG_DEFAULT: AppConfig = {
   tempoCancelamentoMinutos: 5,
   premioMax: 10,
+  premioMaxPorExtracao: {},
   apostasAtivas: true,
   textoRodapeBilhete:
     "Confira seu bilhete, a banca não se responsabiliza por qualquer erro do cambista.",
@@ -90,7 +133,7 @@ const CONFIG_DEFAULT: AppConfig = {
   tempoSegundaViaMinutos: 60,
   diasExcluirCambistaInativo: 0,
   baixaAutomatica: true,
-  milharBrindeGlobal: { tipo: "valor_multiplicado", valorMinimoAtivar: 0 },
+  milharBrindeGlobal: { tipo: "valor_fixo", premioFixo: 0 },
   gerentePodeCancelarAposta: true,
   lucroBancaInstantaneaPercent: 30,
 };
@@ -127,46 +170,72 @@ export function limparInstantaneaStats(): void {
   saveInstantaneaStats({ venda: 0, premio: 0, comissao: 0 });
 }
 
-function loadGerentes(): Gerente[] {
+/** Lê gerentes do localStorage SEM filtrar tombstones nem soft-delete.
+ *  Usado para sincronizar com o Supabase preservando registros marcados como
+ *  "excluido" (necessário para que o soft-delete viaje para outros dispositivos). */
+function loadGerentesRaw(): Gerente[] {
   if (typeof window === "undefined") return [];
   try {
     const data = localStorage.getItem(GERENTES_KEY);
-    return data ? JSON.parse(data) : [];
+    return data ? (JSON.parse(data) as Gerente[]) : [];
   } catch {
     return [];
   }
 }
 
+function loadGerentes(): Gerente[] {
+  const lista = loadGerentesRaw();
+  const tomb = getTombstoneSet("gerentes");
+  return lista.filter((g) => g.status !== "excluido" && !tomb.has(String(g.id)));
+}
+
+/** Grava gerentes preservando aqueles marcados como soft-deletados ("excluido")
+ *  para que o estado de deleção continue válido na próxima leitura. */
 function saveGerentes(gerentes: Gerente[]) {
-  if (typeof window !== "undefined") {
-    localStorage.setItem(GERENTES_KEY, JSON.stringify(gerentes));
-    if (useSupabase) void pushToSupabase("gerentes", gerentes);
+  if (typeof window === "undefined") return;
+  const raw = loadGerentesRaw();
+  const idsNovos = new Set(gerentes.map((g) => String(g.id)));
+  const excluidosPreservados = raw.filter(
+    (g) => g.status === "excluido" && !idsNovos.has(String(g.id)),
+  );
+  const combinado = [...gerentes, ...excluidosPreservados];
+  localStorage.setItem(GERENTES_KEY, JSON.stringify(combinado));
+  // NÃO fazemos push em lote: cada operação (add/update/delete) envia apenas
+  // o item alterado para o Supabase. Push em lote ressuscitaria registros
+  // que foram apagados em outros dispositivos.
+}
+
+function loadCambistasRaw(): Cambista[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const data = localStorage.getItem(CAMBISTAS_KEY);
+    return data ? (JSON.parse(data) as Cambista[]) : [];
+  } catch {
+    return [];
   }
 }
 
 function loadCambistas(): Cambista[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const data = localStorage.getItem(CAMBISTAS_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
+  const lista = loadCambistasRaw();
+  const tomb = getTombstoneSet("cambistas");
+  return lista.filter((c) => c.status !== "excluido" && !tomb.has(String(c.id)));
 }
 
 function saveCambistas(cambistas: Cambista[]) {
-  if (typeof window !== "undefined") {
-    localStorage.setItem(CAMBISTAS_KEY, JSON.stringify(cambistas));
-    if (useSupabase) {
-      void pushToSupabase("gerentes", loadGerentes());
-      void pushToSupabase("cambistas", cambistas);
-    }
-  }
+  if (typeof window === "undefined") return;
+  const raw = loadCambistasRaw();
+  const idsNovos = new Set(cambistas.map((c) => String(c.id)));
+  const excluidosPreservados = raw.filter(
+    (c) => c.status === "excluido" && !idsNovos.has(String(c.id)),
+  );
+  const combinado = [...cambistas, ...excluidosPreservados];
+  localStorage.setItem(CAMBISTAS_KEY, JSON.stringify(combinado));
+  // NÃO fazemos push em lote (motivos no comentário de saveGerentes).
 }
 
 export function getGerentes(): Gerente[] {
   const g = loadGerentes();
-  if (g.length === 0) {
+  if (g.length === 0 && !jaInicializou()) {
     const inicial: Gerente = {
       id: "1",
       codigo: "default",
@@ -186,9 +255,12 @@ export function getGerentes(): Gerente[] {
       criadoEm: new Date().toLocaleString("pt-BR"),
     };
     saveGerentes([inicial]);
-    return [inicial];
+    marcarBancaInicializada();
+    return ordenarPorLogin([inicial]);
   }
-  return g.map((x) => ({ ...x, codigo: (x as { codigo?: string }).codigo ?? "default" }));
+  return ordenarPorLogin(
+    g.map((x) => ({ ...x, codigo: (x as { codigo?: string }).codigo ?? "default" })),
+  );
 }
 
 /** Verifica se o código da banca corresponde (Lotobrasil e default tratados como a mesma banca; comparação case-insensitive). */
@@ -206,12 +278,14 @@ function codigoCorresponde(codigoBanca: string, codigoEntidade: string): boolean
 /** Retorna gerentes do código da banca (admin vê só os do seu código). Lotobrasil = default. */
 export function getGerentesPorCodigo(codigo: string): Gerente[] {
   if (!codigo) return [];
-  return getGerentes().filter((g) => codigoCorresponde(codigo, g.codigo ?? "default"));
+  return ordenarPorLogin(
+    getGerentes().filter((g) => codigoCorresponde(codigo, g.codigo ?? "default")),
+  );
 }
 
 export function getCambistas(): Cambista[] {
   const c = loadCambistas();
-  if (c.length === 0) {
+  if (c.length === 0 && !jaInicializou()) {
     const inicial: Cambista[] = [
       {
         id: "1",
@@ -271,15 +345,20 @@ export function getCambistas(): Cambista[] {
       },
     ];
     saveCambistas(inicial);
+    marcarBancaInicializada();
     return inicial;
   }
-  return c.map((x) => ({ ...x, codigo: (x as { codigo?: string }).codigo ?? "default" }));
+  return ordenarPorLogin(
+    c.map((x) => ({ ...x, codigo: (x as { codigo?: string }).codigo ?? "default" })),
+  );
 }
 
 /** Retorna cambistas do código da banca (admin vê só os do seu código; cliente entra com esse código). Lotobrasil = default. */
 export function getCambistasPorCodigo(codigo: string): Cambista[] {
   if (!codigo) return [];
-  return getCambistas().filter((c) => codigoCorresponde(codigo, c.codigo ?? "default"));
+  return ordenarPorLogin(
+    getCambistas().filter((c) => codigoCorresponde(codigo, c.codigo ?? "default")),
+  );
 }
 
 export function setGerentes(gerentes: Gerente[]) {
@@ -294,12 +373,14 @@ export function addGerente(g: Omit<Gerente, "id" | "criadoEm">): Gerente {
   const lista = getGerentes();
   const novo: Gerente = {
     ...g,
+    login: normalizeLogin(g.login),
     codigo: g.codigo ?? "default",
     id: String(Date.now()),
     criadoEm: new Date().toLocaleString("pt-BR"),
   };
   lista.push(novo);
   saveGerentes(lista);
+  if (useSupabase) void pushToSupabase("gerentes", [novo]);
   return novo;
 }
 
@@ -308,24 +389,69 @@ export function updateGerente(id: string, dados: Partial<Gerente>): void {
   const idx = lista.findIndex((x) => x.id === id);
   if (idx >= 0) {
     const copia = { ...dados };
+    if (typeof copia.login === "string") copia.login = normalizeLogin(copia.login);
     if (copia.senha === "") delete copia.senha;
     lista[idx] = { ...lista[idx], ...copia };
     saveGerentes(lista);
+    if (useSupabase) void pushToSupabase("gerentes", [lista[idx]]);
   }
 }
 
 export function deleteGerente(id: string): void {
-  const lista = getGerentes().filter((x) => x.id !== id);
-  saveGerentes(lista);
-  const cambistas = getCambistas().filter((c) => c.gerenteId !== id);
-  saveCambistas(cambistas);
+  // 1) Atualização LOCAL imediata: marca o gerente e seus cambistas como
+  //    "excluido" no localStorage e adiciona tombstones (para qualquer
+  //    leitura concorrente nos próximos ms).
+  const gerentesRaw = loadGerentesRaw();
+  const gerentesAtualizados = gerentesRaw.map((g) =>
+    String(g.id) === String(id) ? { ...g, status: "excluido" as const } : g,
+  );
+  const cambistasRaw = loadCambistasRaw();
+  const cambistasRemoverIds = cambistasRaw
+    .filter((c) => c.gerenteId === id && c.status !== "excluido")
+    .map((c) => String(c.id));
+  const cambistasAtualizados = cambistasRaw.map((c) =>
+    c.gerenteId === id ? { ...c, status: "excluido" as const } : c,
+  );
+
+  if (typeof window !== "undefined") {
+    localStorage.setItem(GERENTES_KEY, JSON.stringify(gerentesAtualizados));
+    localStorage.setItem(CAMBISTAS_KEY, JSON.stringify(cambistasAtualizados));
+  }
+
+  addTombstone("gerentes", id);
+  for (const cid of cambistasRemoverIds) addTombstone("cambistas", cid);
+
+  // 2) Soft delete SERVER-SIDE (canônico): roda com a credencial do servidor
+  //    e cascateia para os cambistas do gerente.
+  if (typeof window !== "undefined") {
+    try {
+      void fetch(`/api/gerentes/${encodeURIComponent(id)}`, { method: "DELETE" });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // 3) Push redundante via fila offline-first — apenas dos itens afetados.
+  //    Sem lista inteira para não ressuscitar registros apagados em outros
+  //    dispositivos.
+  if (useSupabase) {
+    const gerenteAfetado = gerentesAtualizados.find((g) => String(g.id) === String(id));
+    if (gerenteAfetado) void pushToSupabase("gerentes", [gerenteAfetado]);
+    const cambistasAfetados = cambistasAtualizados.filter((c) => c.gerenteId === id);
+    if (cambistasAfetados.length) void pushToSupabase("cambistas", cambistasAfetados);
+    void deleteFromSupabase("gerentes", id);
+    for (const cid of cambistasRemoverIds) {
+      void deleteFromSupabase("cambistas", cid);
+    }
+  }
 }
 
 export function addCambista(c: Omit<Cambista, "id">): Cambista {
   const lista = getCambistas();
-  const novo: Cambista = { ...c, codigo: c.codigo ?? "default", id: String(Date.now()) };
+  const novo: Cambista = { ...c, login: normalizeLogin(c.login), codigo: c.codigo ?? "default", id: String(Date.now()) };
   lista.push(novo);
   saveCambistas(lista);
+  if (useSupabase) void pushToSupabase("cambistas", [novo]);
   return novo;
 }
 
@@ -333,9 +459,34 @@ export function updateCambista(id: string, dados: Partial<Cambista>): void {
   const lista = getCambistas();
   const idx = lista.findIndex((x) => x.id === id);
   if (idx >= 0) {
-    lista[idx] = { ...lista[idx], ...dados };
+    const copia = { ...dados };
+    if (typeof copia.login === "string") copia.login = normalizeLogin(copia.login);
+    lista[idx] = { ...lista[idx], ...copia };
     saveCambistas(lista);
+    if (useSupabase) void pushToSupabase("cambistas", [lista[idx]]);
   }
+}
+
+/**
+ * Read-modify-write atômico de um cambista. A função recebe o estado MAIS
+ * RECENTE (relido do storage no momento) e devolve a versão atualizada.
+ * Evita "lost update" quando vários callbacks somam em campos como `saidas`.
+ */
+export function patchCambista(
+  id: string,
+  fn: (atual: Cambista) => Partial<Cambista>,
+): Cambista | null {
+  const lista = getCambistas();
+  const idx = lista.findIndex((x) => x.id === id);
+  if (idx < 0) return null;
+  const atual = lista[idx];
+  const patch = fn(atual);
+  const proxima = { ...atual, ...patch };
+  if (typeof proxima.login === "string") proxima.login = normalizeLogin(proxima.login);
+  lista[idx] = proxima;
+  saveCambistas(lista);
+  if (useSupabase) void pushToSupabase("cambistas", [proxima]);
+  return proxima;
 }
 
 /** Atualiza o último acesso do cambista (chamado no login do cliente). */
@@ -366,18 +517,104 @@ export function verificarCambistasInativos(): number {
 }
 
 export function deleteCambista(id: string): void {
-  const lista = getCambistas().filter((x) => x.id !== id);
-  saveCambistas(lista);
+  // 1) Atualização LOCAL imediata (UX): marca o cambista como "excluido"
+  //    para que ele suma do localStorage do dispositivo atual e a tombstone
+  //    impeça qualquer leitura concorrente de reexibi-lo.
+  const raw = loadCambistasRaw();
+  const atualizada = raw.map((c) =>
+    String(c.id) === String(id) ? { ...c, status: "excluido" as const } : c,
+  );
+  if (typeof window !== "undefined") {
+    localStorage.setItem(CAMBISTAS_KEY, JSON.stringify(atualizada));
+  }
+  addTombstone("cambistas", id);
+
+  // 2) Soft delete SERVER-SIDE (canônico): garante que o estado de deleção
+  //    chegue ao Supabase mesmo que o bundle do admin esteja em cache antigo
+  //    ou que o push direto via sync-queue falhe. A API roda com a credencial
+  //    do servidor e aplica status='excluido' + hard-delete best-effort.
+  if (typeof window !== "undefined") {
+    try {
+      void fetch(`/api/cambistas/${encodeURIComponent(id)}`, { method: "DELETE" });
+    } catch {
+      /* ignore — a sync-queue abaixo cuida do retry */
+    }
+  }
+
+  // 3) Push redundante + tentativa de hard-delete via fila offline-first,
+  //    para que mesmo offline a deleção viaje para o Supabase quando voltar a rede.
+  //    Apenas o item afetado é enviado (lista inteira ressuscitaria fantasmas).
+  if (useSupabase) {
+    const itemAfetado = atualizada.find((c) => String(c.id) === String(id));
+    if (itemAfetado) void pushToSupabase("cambistas", [itemAfetado]);
+    void deleteFromSupabase("cambistas", id);
+  }
 }
 
-export function prestarContasCambista(id: string): void {
+/** Remove da fila offline qualquer upsert obsoleto desse cambista — evita
+ *  que um item antigo (com saidas=100, por ex.) sobrescreva o estado zerado. */
+function limparFilaDoCambista(cambistaId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const Q_KEY = "premiacoes_sync_queue";
+    const raw = localStorage.getItem(Q_KEY);
+    if (!raw) return;
+    const fila = JSON.parse(raw) as Array<{
+      op?: { kind?: string; table?: string; payload?: unknown; match?: { id?: unknown } };
+    }>;
+    const nova = fila.filter((item) => {
+      const op = item?.op;
+      if (!op) return true;
+      if (op.table !== "cambistas") return true;
+      if (op.kind === "upsert") {
+        const arr = Array.isArray(op.payload) ? op.payload : [op.payload];
+        const ids = arr.map((p) => String((p as { id?: unknown } | null | undefined)?.id ?? ""));
+        if (ids.includes(String(cambistaId))) return false;
+      }
+      if (op.kind === "update" && String(op.match?.id ?? "") === String(cambistaId)) return false;
+      return true;
+    });
+    localStorage.setItem(Q_KEY, JSON.stringify(nova));
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function prestarContasCambista(id: string): Promise<void> {
+  const agora = new Date().toLocaleString("pt-BR");
+  // 1) Limpa da fila qualquer upsert antigo desse cambista — eles
+  //    representam o estado ANTES da prestação e ressuscitariam saidas/entrada.
+  limparFilaDoCambista(id);
   updateCambista(id, {
     entrada: 0,
     saidas: 0,
     comissao: 0,
     lancamentos: 0,
-    ultimaPrestacao: new Date().toLocaleString("pt-BR"),
+    ultimaPrestacao: agora,
   });
+  if (!useSupabase || typeof window === "undefined") return;
+  try {
+    const res = await fetch(`/api/cambistas/${encodeURIComponent(id)}/prestar-contas`, {
+      method: "POST",
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      erro?: string;
+      ultimaPrestacao?: string;
+    };
+    if (!res.ok || !data.ok) {
+      throw new Error(data.erro || `HTTP ${res.status}`);
+    }
+    // 2) Sincroniza o timestamp do servidor (BRT) localmente — assim o merge
+    //    no próximo F5 vê "local == servidor" e não há ambiguidade.
+    if (data.ultimaPrestacao && data.ultimaPrestacao !== agora) {
+      updateCambista(id, { ultimaPrestacao: data.ultimaPrestacao });
+    }
+  } catch {
+    const { pushToSupabase } = await import("./sync-supabase");
+    const cam = getCambistas().find((c) => c.id === id);
+    if (cam) await pushToSupabase("cambistas", [cam]);
+  }
 }
 
 // Extrações
@@ -393,19 +630,36 @@ function loadExtracoes(): Extracao[] {
 
 function saveExtracoes(e: Extracao[]) {
   if (typeof window !== "undefined") {
-    localStorage.setItem(EXTRACOES_KEY, JSON.stringify(e));
-    if (useSupabase) void pushToSupabase("extracoes", e);
+    const ordenadas = ordenarExtracoesPorHorario(e);
+    localStorage.setItem(EXTRACOES_KEY, JSON.stringify(ordenadas));
+    // Push por item em add/update/delete — evita ressuscitar extrações no sync.
   }
+}
+
+function minutosHorario(horario: string): number {
+  const m = String(horario ?? "").match(/(\d{1,2}):(\d{2})/);
+  if (!m) return Number.MAX_SAFE_INTEGER;
+  const h = Math.max(0, Math.min(23, Number(m[1] ?? 0)));
+  const min = Math.max(0, Math.min(59, Number(m[2] ?? 0)));
+  return h * 60 + min;
+}
+
+function ordenarExtracoesPorHorario(extracoes: Extracao[]): Extracao[] {
+  return [...extracoes].sort((a, b) => {
+    const porHora = minutosHorario(a.encerra) - minutosHorario(b.encerra);
+    if (porHora !== 0) return porHora;
+    return a.nome.localeCompare(b.nome, "pt-BR");
+  });
 }
 
 export function getExtracoes(): Extracao[] {
   const e = loadExtracoes();
   if (e.length === 0) {
-    const inicial = getExtracoesPadrao();
+    const inicial = ordenarExtracoesPorHorario(getExtracoesPadrao());
     saveExtracoes(inicial);
     return inicial;
   }
-  return e;
+  return ordenarExtracoesPorHorario(e);
 }
 
 export function setExtracoes(extracoes: Extracao[]) {
@@ -418,19 +672,23 @@ export function updateExtracao(id: string, dados: Partial<Extracao>) {
   if (idx >= 0) {
     lista[idx] = { ...lista[idx], ...dados };
     saveExtracoes(lista);
+    if (useSupabase) void pushToSupabase("extracoes", [lista[idx]]);
   }
 }
 
-export function addExtracao(ext: Omit<Extracao, "id">) {
+export function addExtracao(ext: Omit<Extracao, "id">): Extracao {
   const lista = getExtracoes();
   const novo: Extracao = { ...ext, id: String(Date.now()) };
   lista.push(novo);
   saveExtracoes(lista);
+  if (useSupabase) void pushToSupabase("extracoes", [novo]);
   return novo;
 }
 
 export function deleteExtracao(id: string) {
+  addTombstone("extracoes", id);
   saveExtracoes(getExtracoes().filter((e) => e.id !== id));
+  if (useSupabase) void deleteFromSupabase("extracoes", id);
 }
 
 // Sorteios
@@ -530,6 +788,15 @@ function loadConfig(): AppConfig {
       ...CONFIG_DEFAULT,
       ...parsed,
       premioMax: parsed.premioMax === 5 ? 5 : 10,
+      premioMaxPorExtracao: (() => {
+        const raw = parsed.premioMaxPorExtracao;
+        if (!raw || typeof raw !== "object") return {};
+        const out: Record<string, 5 | 10> = {};
+        for (const [id, valor] of Object.entries(raw as Record<string, unknown>)) {
+          out[String(id)] = valor === 5 ? 5 : 10;
+        }
+        return out;
+      })(),
       apostasAtivas:
         typeof parsed.apostasAtivas === "boolean"
           ? parsed.apostasAtivas
@@ -556,9 +823,17 @@ function loadConfig(): AppConfig {
         ? parsed.diasExcluirCambistaInativo
         : CONFIG_DEFAULT.diasExcluirCambistaInativo ?? 0,
       baixaAutomatica: typeof parsed.baixaAutomatica === "boolean" ? parsed.baixaAutomatica : CONFIG_DEFAULT.baixaAutomatica ?? false,
-      milharBrindeGlobal: parsed.milharBrindeGlobal && typeof parsed.milharBrindeGlobal === "object" && ["nao", "valor_fixo", "valor_multiplicado"].includes((parsed.milharBrindeGlobal as MilharBrindeGlobal).tipo)
-        ? (parsed.milharBrindeGlobal as MilharBrindeGlobal)
-        : CONFIG_DEFAULT.milharBrindeGlobal,
+      milharBrindeGlobal: (() => {
+        const mb = parsed.milharBrindeGlobal as MilharBrindeGlobal | undefined;
+        if (!mb || typeof mb !== "object" || !["nao", "valor_fixo", "valor_multiplicado"].includes(mb.tipo)) {
+          return CONFIG_DEFAULT.milharBrindeGlobal;
+        }
+        return {
+          ...mb,
+          tipo: mb.tipo === "nao" ? "nao" : "valor_fixo",
+          premioFixo: typeof mb.premioFixo === "number" && mb.premioFixo >= 0 ? mb.premioFixo : 0,
+        } satisfies MilharBrindeGlobal;
+      })(),
       gerentePodeCancelarAposta: typeof parsed.gerentePodeCancelarAposta === "boolean" ? parsed.gerentePodeCancelarAposta : CONFIG_DEFAULT.gerentePodeCancelarAposta ?? true,
       lucroBancaInstantaneaPercent: typeof parsed.lucroBancaInstantaneaPercent === "number" && parsed.lucroBancaInstantaneaPercent >= 0 && parsed.lucroBancaInstantaneaPercent <= 100
         ? parsed.lucroBancaInstantaneaPercent
@@ -581,6 +856,12 @@ export function getConfig(): AppConfig {
   return loadConfig();
 }
 
+export function getPremioMilharBrinde(): number {
+  const mb = loadConfig().milharBrindeGlobal;
+  if (!mb || mb.tipo === "nao") return 0;
+  return Math.max(0, mb.premioFixo ?? 0);
+}
+
 export function setConfig(c: Partial<AppConfig>) {
   saveConfig({ ...loadConfig(), ...c });
 }
@@ -600,6 +881,25 @@ export function podeImprimirSegundaVia(bilheteDataStr: string, tempoMinutos: num
 
 export function getPremioMax(): 5 | 10 {
   return loadConfig().premioMax;
+}
+
+export function getPremioMaxExtracao(extracaoId: string | null | undefined): 5 | 10 {
+  const cfg = loadConfig();
+  if (extracaoId && cfg.premioMaxPorExtracao?.[extracaoId]) {
+    return cfg.premioMaxPorExtracao[extracaoId];
+  }
+  return cfg.premioMax;
+}
+
+export function setPremioMaxExtracao(extracaoId: string, premioMax: 5 | 10): void {
+  const cfg = loadConfig();
+  saveConfig({
+    ...cfg,
+    premioMaxPorExtracao: {
+      ...(cfg.premioMaxPorExtracao ?? {}),
+      [extracaoId]: premioMax,
+    },
+  });
 }
 
 // Cotações padrão (22 tipos) – editáveis no painel em Cotações
@@ -681,7 +981,10 @@ function loadBilhetes(): Bilhete[] {
   if (typeof window === "undefined") return [];
   try {
     const data = localStorage.getItem(BILHETES_KEY);
-    return data ? JSON.parse(data) : [];
+    const lista = data ? (JSON.parse(data) as Bilhete[]) : [];
+    const tomb = getTombstoneSet("bilhetes");
+    if (tomb.size === 0) return lista;
+    return lista.filter((b) => !tomb.has(String(b.id)));
   } catch {
     return [];
   }
@@ -690,22 +993,68 @@ function loadBilhetes(): Bilhete[] {
 function saveBilhetes(b: Bilhete[]) {
   if (typeof window !== "undefined") {
     localStorage.setItem(BILHETES_KEY, JSON.stringify(b));
-    if (useSupabase) void pushToSupabase("bilhetes", b);
+    // Sem push em lote: cada venda/resultado envia só o(s) bilhete(s) afetado(s).
   }
 }
 
 export function getBilhetes(): Bilhete[] {
-  return loadBilhetes();
+  return ordenarBilhetesRecentesPrimeiro(loadBilhetes());
+}
+
+function fingerprintVenda(b: Pick<Bilhete, "cambistaId" | "extracaoId" | "total" | "itens">): string {
+  return JSON.stringify({
+    c: b.cambistaId,
+    e: b.extracaoId,
+    t: b.total,
+    i: b.itens.map((x) => ({
+      m: x.modalidade,
+      n: x.numeros.trim(),
+      v: x.valor,
+      p: x.premio ?? "",
+      mb: x.milharBrinde ?? "",
+    })),
+  });
+}
+
+/** Evita bilhete duplicado quando o cliente toca 2x ou a rede reenvia a venda. */
+function bilheteDuplicadoRecente(b: Omit<Bilhete, "id" | "codigo">): Bilhete | null {
+  const fp = fingerprintVenda(b);
+  const limiteMs = 120_000;
+  const agora = Date.now();
+  for (const exist of getBilhetes()) {
+    if (exist.cambistaId !== b.cambistaId || exist.extracaoId !== b.extracaoId) continue;
+    if (exist.situacao === "cancelado") continue;
+    const dt = parseData(exist.data);
+    if (dt && agora - dt.getTime() > limiteMs) continue;
+    if (fingerprintVenda(exist) === fp) return exist;
+  }
+  return null;
 }
 
 export async function addBilhete(b: Omit<Bilhete, "id" | "codigo">): Promise<Bilhete> {
+  const duplicado = bilheteDuplicadoRecente(b);
+  if (duplicado) return duplicado;
+
   const check = podeRealizarVenda(b.cambistaId, b.total);
   if (!check.ok) throw new Error(check.erro ?? "Saldo insuficiente para esta venda.");
 
   const lista = getBilhetes();
   const codigo = String(Date.now()).slice(-11);
+  let milharBrindeAplicada = false;
+  const itens = b.itens.map((item) => {
+    if (!item.milharBrinde) return item;
+    if (milharBrindeAplicada) {
+      // Remove milharBrinde de itens subsequentes: regra de 1 brinde por bilhete.
+      const semBrinde = { ...item };
+      delete (semBrinde as { milharBrinde?: unknown }).milharBrinde;
+      return semBrinde;
+    }
+    milharBrindeAplicada = true;
+    return item;
+  });
   const novo: Bilhete = {
     ...b,
+    itens,
     id: String(Date.now()),
     codigo,
   };
@@ -714,15 +1063,12 @@ export async function addBilhete(b: Omit<Bilhete, "id" | "codigo">): Promise<Bil
   const cam = getCambistas().find((c) => c.id === b.cambistaId);
   if (cam) {
     const comissaoBilhete = calcularComissaoBilhete(novo, cam);
-    updateCambista(b.cambistaId, {
-      entrada: (cam.entrada ?? 0) + b.total,
-      comissao: (cam.comissao ?? 0) + comissaoBilhete,
-    });
+    patchCambista(b.cambistaId, (atual) => ({
+      entrada: Math.round(((atual.entrada ?? 0) + b.total) * 100) / 100,
+      comissao: Math.round(((atual.comissao ?? 0) + comissaoBilhete) * 100) / 100,
+    }));
   }
-  if (useSupabase) {
-    await pushToSupabase("bilhetes", getBilhetes());
-    await pushToSupabase("cambistas", getCambistas());
-  }
+  if (useSupabase) await pushToSupabase("bilhetes", [novo]);
   return novo;
 }
 
@@ -747,6 +1093,7 @@ export function calcularPremioPotencialBilhete(bilhete: Bilhete, cambista: Cambi
       const cot = getCotacaoEfetiva(cambista, item.modalidade as CotacaoKey);
       total += (item.valor * cot) / divisor;
     }
+    if (item.milharBrinde) total += getPremioMilharBrinde();
   }
   return total;
 }
@@ -765,8 +1112,20 @@ export function calcularComissaoBilhete(bilhete: Bilhete, cambista: Cambista): n
   }, 0);
 }
 
+async function sincronizarCancelamentoBilhete(id: string, b: Bilhete): Promise<void> {
+  if (!useSupabase || typeof window === "undefined") return;
+  try {
+    const res = await fetch(`/api/bilhetes/${encodeURIComponent(id)}/cancelar`, { method: "POST" });
+    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; erro?: string };
+    if (!res.ok || !data.ok) throw new Error(data.erro || `HTTP ${res.status}`);
+  } catch {
+    const { pushToSupabase } = await import("./sync-supabase");
+    await pushToSupabase("bilhetes", [b]);
+  }
+}
+
 /** Cancela bilhete (só pendente). Respeita tempo e encerra da extração no cliente; no admin use cancelarBilheteAdmin. */
-export function cancelarBilhete(id: string): boolean {
+export async function cancelarBilhete(id: string): Promise<boolean> {
   const lista = getBilhetes();
   const idx = lista.findIndex((b) => b.id === id);
   if (idx < 0 || lista[idx].situacao !== "pendente") return false;
@@ -776,30 +1135,52 @@ export function cancelarBilhete(id: string): boolean {
   const cam = getCambistas().find((c) => c.id === b.cambistaId);
   if (cam) {
     const comissaoBilhete = calcularComissaoBilhete(b, cam);
-    updateCambista(b.cambistaId, {
-      entrada: Math.max(0, cam.entrada - b.total),
-      comissao: Math.max(0, (cam.comissao ?? 0) - comissaoBilhete),
-    });
+    patchCambista(b.cambistaId, (atual) => ({
+      entrada: Math.max(0, Math.round(((atual.entrada ?? 0) - b.total) * 100) / 100),
+      comissao: Math.max(0, Math.round(((atual.comissao ?? 0) - comissaoBilhete) * 100) / 100),
+    }));
   }
+  await sincronizarCancelamentoBilhete(id, b);
   return true;
 }
 
-/** Cancela bilhete pelo admin a qualquer momento (pendente, pago ou perdedor). Em pendente reverte entrada e comissão. */
-export function cancelarBilheteAdmin(id: string): boolean {
+/** Cancela bilhete pelo admin a qualquer momento (pendente, pago ou perdedor).
+ *  - Em `pendente`: reverte entrada e comissão.
+ *  - Em `pago`: reverte entrada, comissão E saidas (subtraindo o prêmio que
+ *    foi pago). Sem isso, bilhete pago cancelado deixava saída fantasma.
+ */
+export async function cancelarBilheteAdmin(id: string): Promise<boolean> {
   const lista = getBilhetes();
   const idx = lista.findIndex((b) => b.id === id);
   if (idx < 0 || lista[idx].situacao === "cancelado") return false;
   const b = lista[idx];
   const cam = getCambistas().find((c) => c.id === b.cambistaId);
-  if (b.situacao === "pendente" && cam) {
-    const comissaoBilhete = calcularComissaoBilhete(b, cam);
-    updateCambista(b.cambistaId, {
-      entrada: Math.max(0, (cam.entrada ?? 0) - b.total),
-      comissao: Math.max(0, (cam.comissao ?? 0) - comissaoBilhete),
-    });
+  if (cam) {
+    const dtBilhete = parseData(b.data);
+    const dtPrest = parseData(cam.ultimaPrestacao);
+    const contaAberta = !dtPrest || !dtBilhete || dtBilhete.getTime() > dtPrest.getTime();
+    if (contaAberta) {
+      const comissaoBilhete = calcularComissaoBilhete(b, cam);
+      // Reverte saídas se o bilhete tinha pago prêmio
+      let saidaRevertida = 0;
+      if (b.situacao === "pago") {
+        const res = getResultadoByExtracaoData(b.extracaoId, b.data);
+        if (res) {
+          const conf = conferirBilhete(b, res, cam, getCotacaoEfetiva, getPremioMilharBrinde());
+          saidaRevertida = conf.valorGanho;
+        }
+      }
+      patchCambista(b.cambistaId, (atual) => ({
+        entrada: Math.max(0, Math.round(((atual.entrada ?? 0) - b.total) * 100) / 100),
+        comissao: Math.max(0, Math.round(((atual.comissao ?? 0) - comissaoBilhete) * 100) / 100),
+        saidas: Math.max(0, Math.round(((atual.saidas ?? 0) - saidaRevertida) * 100) / 100),
+      }));
+    }
   }
   lista[idx] = { ...lista[idx], situacao: "cancelado" };
   saveBilhetes(lista);
+  const cancelado = lista[idx];
+  await sincronizarCancelamentoBilhete(id, cancelado);
   return true;
 }
 
@@ -808,7 +1189,10 @@ function loadLancamentos(): Lancamento[] {
   if (typeof window === "undefined") return [];
   try {
     const data = localStorage.getItem(LANCAMENTOS_KEY);
-    return data ? JSON.parse(data) : [];
+    const lista = data ? (JSON.parse(data) as Lancamento[]) : [];
+    const tomb = getTombstoneSet("lancamentos");
+    if (tomb.size === 0) return lista;
+    return lista.filter((l) => !tomb.has(String(l.id)));
   } catch {
     return [];
   }
@@ -817,7 +1201,10 @@ function loadLancamentos(): Lancamento[] {
 function saveLancamentos(l: Lancamento[]) {
   if (typeof window !== "undefined") {
     localStorage.setItem(LANCAMENTOS_KEY, JSON.stringify(l));
-    if (useSupabase) void pushToSupabase("lancamentos", l);
+    // IMPORTANTE: não fazemos push em lote da lista inteira. Cada operação
+    // (add/delete) envia apenas o item afetado para o Supabase. Isso evita
+    // que registros apagados em outros dispositivos sejam ressuscitados ao
+    // re-upsertarmos uma lista local desatualizada.
   }
 }
 
@@ -830,15 +1217,22 @@ export function addLancamento(l: Omit<Lancamento, "id">): Lancamento {
   const novo: Lancamento = { ...l, id: String(Date.now()) };
   lista.push(novo);
   saveLancamentos(lista);
+  if (useSupabase) void pushToSupabase("lancamentos", [novo]);
   const cam = getCambistas().find((c) => c.id === l.cambistaId);
   if (cam) {
-    // Lançamento afeta apenas o caixa (lancamentos), não o saldo (limite do cliente).
-    // + adiantar: banca mandou dinheiro pro cliente → aumenta total a prestar
-    // - retirar: cliente mandou dinheiro pra banca → diminui total a prestar
-    const delta = l.tipo === "adiantar" ? l.valor : -l.valor;
-    updateCambista(l.cambistaId, {
-      lancamentos: cam.lancamentos + delta,
-    });
+    // Só afeta o caixa atual se o lançamento é POSTERIOR à última prestação
+    // (consistente com reconciliarCaixaCambistas e deleteLancamento).
+    // Lançamento retroativo só fica no histórico — o caixa atual reflete
+    // só a janela aberta.
+    const dtLanc = parseData(l.data);
+    const dtPrest = parseData(cam.ultimaPrestacao);
+    const contaAberta = !dtPrest || !dtLanc || dtLanc.getTime() > dtPrest.getTime();
+    if (contaAberta) {
+      const delta = l.tipo === "adiantar" ? l.valor : -l.valor;
+      patchCambista(l.cambistaId, (atual) => ({
+        lancamentos: Math.round(((atual.lancamentos ?? 0) + delta) * 100) / 100,
+      }));
+    }
   }
   return novo;
 }
@@ -851,11 +1245,33 @@ export function deleteLancamento(id: string): boolean {
   const l = lista[idx];
   const cam = getCambistas().find((c) => c.id === l.cambistaId);
   if (cam) {
-    const delta = l.tipo === "adiantar" ? -l.valor : l.valor;
-    updateCambista(l.cambistaId, { lancamentos: cam.lancamentos + delta });
+    const dataLancamento = parseData(l.data);
+    const dataPrestacao = parseData(cam.ultimaPrestacao);
+    const lancamentoEmAberto =
+      !dataPrestacao || !dataLancamento || dataLancamento.getTime() > dataPrestacao.getTime();
+    if (lancamentoEmAberto) {
+      const delta = l.tipo === "adiantar" ? -l.valor : l.valor;
+      updateCambista(l.cambistaId, { lancamentos: cam.lancamentos + delta });
+    }
   }
+  addTombstone("lancamentos", id);
   lista.splice(idx, 1);
   saveLancamentos(lista);
+
+  // Delete SERVER-SIDE (canônico): garante que a remoção chegue ao Supabase
+  // mesmo se o bundle do navegador estiver em cache antigo. Como nenhuma
+  // tabela tem FK para `lancamentos`, o hard delete sempre pode ser feito.
+  if (typeof window !== "undefined") {
+    try {
+      void fetch(`/api/lancamentos/${encodeURIComponent(id)}`, { method: "DELETE" });
+    } catch {
+      /* ignore — a sync-queue abaixo cuida do retry */
+    }
+  }
+
+  if (useSupabase) {
+    void deleteFromSupabase("lancamentos", id);
+  }
   return true;
 }
 
@@ -864,7 +1280,10 @@ function loadResultados(): Resultado[] {
   if (typeof window === "undefined") return [];
   try {
     const data = localStorage.getItem(RESULTADOS_KEY);
-    return data ? JSON.parse(data) : [];
+    const lista = data ? (JSON.parse(data) as Resultado[]) : [];
+    const tomb = getTombstoneSet("resultados");
+    if (tomb.size === 0) return lista;
+    return lista.filter((r) => !tomb.has(String(r.id)));
   } catch {
     return [];
   }
@@ -873,7 +1292,7 @@ function loadResultados(): Resultado[] {
 function saveResultados(r: Resultado[]) {
   if (typeof window !== "undefined") {
     localStorage.setItem(RESULTADOS_KEY, JSON.stringify(r));
-    if (useSupabase) void pushToSupabase("resultados", r);
+    // Sem push em lote — add/update/remove enviam só o registro afetado.
   }
 }
 
@@ -886,25 +1305,189 @@ export async function addResultado(r: Omit<Resultado, "id">): Promise<Resultado>
   const novo: Resultado = { ...r, id: String(Date.now()) };
   lista.push(novo);
   saveResultados(lista);
+  let bilhetesAfetados: Bilhete[] = [];
   if (loadConfig().baixaAutomatica !== false) {
-    atualizarBilhetesComResultado(novo);
+    bilhetesAfetados = atualizarBilhetesComResultado(novo);
   }
   if (useSupabase) {
-    await pushToSupabase("resultados", getResultados());
-    await pushToSupabase("bilhetes", getBilhetes());
-    await pushToSupabase("cambistas", getCambistas());
+    await pushToSupabase("resultados", [novo]);
+    if (bilhetesAfetados.length) await pushToSupabase("bilhetes", bilhetesAfetados);
   }
   return novo;
 }
 
-/** Data do bilhete "23/02/2026, 12:05:00" -> "23/02/26" */
+/**
+ * Edita um resultado já lançado:
+ *  - Atualiza grupos/premios/dezenas.
+ *  - Reverte os prêmios pagos dos bilhetes daquela extração/data e força reconferência
+ *    (assim o valor antigo deixa de contar como saída e o novo é aplicado).
+ */
+export async function updateResultado(
+  id: string,
+  patch: Partial<Pick<Resultado, "grupos" | "premios" | "dezenas">>,
+): Promise<Resultado | null> {
+  const lista = getResultados();
+  const idx = lista.findIndex((r) => r.id === id);
+  if (idx < 0) return null;
+
+  const original = lista[idx]!;
+  const editado: Resultado = {
+    ...original,
+    grupos: patch.grupos ?? original.grupos,
+    dezenas: patch.dezenas ?? original.dezenas,
+    premios: patch.premios ?? original.premios,
+  };
+  lista[idx] = editado;
+  saveResultados(lista);
+
+  // Reverter saídas dos bilhetes anteriores deste resultado e reabrir para reconferência.
+  // Acumula deltas por cambista para evitar lost-update entre bilhetes do mesmo cambista.
+  const dataNorm = normalizarDataBilhete(editado.data);
+  const bilhetes = getBilhetes();
+  const cambistas = getCambistas();
+  const deltaReversao = new Map<string, number>();
+  for (const b of bilhetes) {
+    if (b.extracaoId !== editado.extracaoId || b.situacao === "cancelado") continue;
+    if (normalizarDataBilhete(b.data) !== dataNorm) continue;
+    if (b.situacao === "pago") {
+      const cam = cambistas.find((c) => c.id === b.cambistaId);
+      if (cam) {
+        const confAntiga = conferirBilhete(b, original, cam, getCotacaoEfetiva, getPremioMilharBrinde());
+        if (confAntiga.valorGanho > 0) {
+          deltaReversao.set(
+            String(cam.id),
+            (deltaReversao.get(String(cam.id)) ?? 0) - confAntiga.valorGanho,
+          );
+        }
+      }
+    }
+    const i = bilhetes.findIndex((x) => x.id === b.id);
+    const ref = i >= 0 ? bilhetes[i] : null;
+    if (i >= 0 && ref) bilhetes[i] = { ...ref, situacao: "pendente" };
+  }
+  saveBilhetes(bilhetes);
+
+  // Aplica reversões — UM patch por cambista
+  for (const [camId, delta] of deltaReversao) {
+    if (!Number.isFinite(delta) || delta === 0) continue;
+    patchCambista(camId, (atual) => ({
+      saidas: Math.max(0, Math.round(((atual.saidas ?? 0) + delta) * 100) / 100),
+    }));
+  }
+  const bilhetesAfetados = atualizarBilhetesComResultado(editado);
+
+  if (useSupabase) {
+    await pushToSupabase("resultados", [editado]);
+    const ids = new Set<string>();
+    const paraSync: Bilhete[] = [];
+    for (const b of bilhetes) {
+      if (b.extracaoId !== editado.extracaoId || normalizarDataBilhete(b.data) !== dataNorm) continue;
+      if (!ids.has(b.id)) {
+        ids.add(b.id);
+        paraSync.push(b);
+      }
+    }
+    for (const b of bilhetesAfetados) {
+      if (!ids.has(b.id)) {
+        ids.add(b.id);
+        paraSync.push(b);
+      }
+    }
+    if (paraSync.length) await pushToSupabase("bilhetes", paraSync);
+  }
+  return editado;
+}
+
+/**
+ * Apaga um resultado lançado.
+ *
+ * Operação segura:
+ *  - Reverte os prêmios já pagos: para cada bilhete daquela extração/data que
+ *    estava `pago` por causa desse resultado, subtrai `valorGanho` de
+ *    `cambista.saidas` (não fica saída duplicada/fantasma).
+ *  - Marca esses bilhetes como `pendente` (a UI volta a mostrá-los como
+ *    aguardando resultado).
+ *  - Remove o resultado da lista local, adiciona tombstone e propaga DELETE
+ *    para o Supabase (com a mesma estratégia usada por cambistas/lancamentos).
+ *
+ * Idempotente: chamar duas vezes não tem efeito colateral além do primeiro.
+ */
+export async function removeResultado(id: string): Promise<boolean> {
+  const lista = getResultados();
+  const idx = lista.findIndex((r) => r.id === id);
+  if (idx < 0) return false;
+
+  const original = lista[idx]!;
+  const dataNorm = normalizarDataBilhete(original.data);
+  const bilhetes = getBilhetes();
+  const cambistas = getCambistas();
+
+  const deltaReversaoRem = new Map<string, number>();
+  for (const b of bilhetes) {
+    if (b.extracaoId !== original.extracaoId || b.situacao === "cancelado") continue;
+    if (normalizarDataBilhete(b.data) !== dataNorm) continue;
+    if (b.situacao === "pago") {
+      const cam = cambistas.find((c) => c.id === b.cambistaId);
+      if (cam) {
+        const conf = conferirBilhete(b, original, cam, getCotacaoEfetiva, getPremioMilharBrinde());
+        if (conf.valorGanho > 0) {
+          deltaReversaoRem.set(
+            String(cam.id),
+            (deltaReversaoRem.get(String(cam.id)) ?? 0) - conf.valorGanho,
+          );
+        }
+      }
+    }
+    const i = bilhetes.findIndex((x) => x.id === b.id);
+    const ref = i >= 0 ? bilhetes[i] : null;
+    if (i >= 0 && ref) bilhetes[i] = { ...ref, situacao: "pendente" };
+  }
+  saveBilhetes(bilhetes);
+
+  for (const [camId, delta] of deltaReversaoRem) {
+    if (!Number.isFinite(delta) || delta === 0) continue;
+    patchCambista(camId, (atual) => ({
+      saidas: Math.max(0, Math.round(((atual.saidas ?? 0) + delta) * 100) / 100),
+    }));
+  }
+
+  lista.splice(idx, 1);
+  saveResultados(lista);
+
+  if (useSupabase) {
+    await deleteFromSupabase("resultados", id);
+    const paraSync = bilhetes.filter(
+      (b) =>
+        b.extracaoId === original.extracaoId &&
+        normalizarDataBilhete(b.data) === dataNorm &&
+        b.situacao !== "cancelado",
+    );
+    if (paraSync.length) await pushToSupabase("bilhetes", paraSync);
+    const cambistasAfetados = [
+      ...new Set(paraSync.map((b) => b.cambistaId).filter(Boolean)),
+    ]
+      .map((cid) => getCambistas().find((c) => c.id === cid))
+      .filter((c): c is Cambista => !!c);
+    if (cambistasAfetados.length) await pushToSupabase("cambistas", cambistasAfetados);
+  }
+  return true;
+}
+
+/**
+ * Normaliza qualquer "dd/mm/yy(yy)[, HH:mm:ss]" para "dd/mm/yyyy".
+ * Compatível com bilhetes/resultados antigos (que tinham yy) e novos (yyyy):
+ * a comparação acontece sempre na forma canônica de 4 dígitos.
+ */
 function normalizarDataBilhete(dataStr: string): string {
   const m = dataStr.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
   if (!m) return "";
   const [, d, M, y] = m;
-  const ano = y!.length === 2 ? y : y!.slice(-2);
-  return `${d}/${M}/${ano}`;
+  const yNum = parseInt(y!, 10);
+  const ano = y!.length === 2 ? `20${String(yNum).padStart(2, "0")}` : String(yNum);
+  return `${d!.padStart(2, "0")}/${M!.padStart(2, "0")}/${ano}`;
 }
+
+export { parseDataPtBrOuIso } from "./date-utils";
 
 /** Busca resultado pela extração e data (data no formato dd/mm/yy ou dd/mm/yyyy) */
 export function getResultadoByExtracaoData(extracaoId: string, dataBilhete: string): Resultado | null {
@@ -926,8 +1509,15 @@ export function recalculateComissaoFromBilhetes(): void {
   const cambistas = getCambistas();
   const bilhetes = getBilhetes();
   for (const cam of cambistas) {
+    const ultimaPrestacao = parseData(cam.ultimaPrestacao);
+    const ultimaMs = ultimaPrestacao ? ultimaPrestacao.getTime() : -Infinity;
     const comissaoCorreta = bilhetes
-      .filter((b) => b.cambistaId === cam.id && b.situacao !== "cancelado")
+      .filter((b) => {
+        if (b.cambistaId !== cam.id || b.situacao === "cancelado") return false;
+        const bd = parseData(b.data);
+        if (!bd) return false; // bilhete sem data parseável é fora da janela
+        return bd.getTime() > ultimaMs;
+      })
       .reduce((acc, b) => acc + calcularComissaoBilhete(b, cam), 0);
     if (Math.abs((cam.comissao ?? 0) - comissaoCorreta) > 0.01) {
       updateCambista(cam.id, { comissao: comissaoCorreta });
@@ -935,36 +1525,226 @@ export function recalculateComissaoFromBilhetes(): void {
   }
 }
 
-/** Ao adicionar resultado, marca bilhetes daquela extração/data como pago ou perdedor. Prêmio pago vira Saída no caixa do cambista. */
-function atualizarBilhetesComResultado(resultado: Resultado) {
+/**
+ * Reconcilia o caixa de TODOS os cambistas a partir das fontes de verdade
+ * (`bilhetes` e `lancamentos`). As colunas `entrada`, `saidas`, `comissao`
+ * e `lancamentos` do cambista são CACHE — derivadas dos bilhetes e lançamentos
+ * em aberto (com `data > ultimaPrestacao`). Se por qualquer motivo (queda do
+ * servidor no meio de uma operação, falha de sync entre dispositivos, etc.)
+ * esses valores ficarem fora de sincronia com os dados, esta função recalcula
+ * tudo do zero e ajusta. Garante que NUNCA se perde dinheiro por inconsistência.
+ *
+ * Retorna o número de cambistas que precisaram de ajuste (0 = tudo estava OK).
+ */
+export function reconciliarCaixaCambistas(): {
+  ajustados: number;
+  detalhes: Array<{
+    cambistaId: string;
+    login: string;
+    antes: { entrada: number; saidas: number; comissao: number; lancamentos: number };
+    depois: { entrada: number; saidas: number; comissao: number; lancamentos: number };
+  }>;
+} {
+  const cambistas = getCambistas();
+  const bilhetes = getBilhetes();
+  const lancamentos = getLancamentos();
+  const resultados = getResultados();
+  const premioFixoBrinde = getPremioMilharBrinde();
+  const detalhes: ReturnType<typeof reconciliarCaixaCambistas>["detalhes"] = [];
+  let ajustados = 0;
+
+  for (const cam of cambistas) {
+    const ultimaPrestacao = parseData(cam.ultimaPrestacao);
+    const ultimaMs = ultimaPrestacao ? ultimaPrestacao.getTime() : -Infinity;
+    const emAberto = (data: string) => {
+      const dt = parseData(data);
+      if (!dt) return true;
+      return dt.getTime() > ultimaMs;
+    };
+
+    let entradaCorreta = 0;
+    let saidasCorretas = 0;
+    let comissaoCorreta = 0;
+    let lancamentosCorretos = 0;
+
+    for (const b of bilhetes) {
+      if (b.cambistaId !== cam.id || b.situacao === "cancelado") continue;
+      if (!emAberto(b.data)) continue;
+      entradaCorreta += Number(b.total ?? 0);
+      comissaoCorreta += calcularComissaoBilhete(b, cam);
+      if (b.situacao === "pago") {
+        const resultado =
+          resultados.find(
+            (r) =>
+              r.extracaoId === b.extracaoId &&
+              normalizarDataBilhete(r.data) === normalizarDataBilhete(b.data),
+          ) ?? null;
+        if (resultado) {
+          const conf = conferirBilhete(b, resultado, cam, getCotacaoEfetiva, premioFixoBrinde);
+          saidasCorretas += conf.valorGanho;
+        }
+        // Bilhete `pago` sem resultado correspondente é caso patológico (sync
+        // inconsistente). NÃO somamos `cam.saidas` aqui — antes esse fallback
+        // multiplicava o valor por bilhete (`saidas += cam.saidas` por bilhete
+        // gerava 2x, 3x...). Tratamos como prêmio = 0 e o admin pode rodar
+        // "buscar resultado" para corrigir.
+      }
+    }
+
+    for (const l of lancamentos) {
+      if (l.cambistaId !== cam.id) continue;
+      if (!emAberto(l.data)) continue;
+      const delta = l.tipo === "adiantar" ? l.valor : -l.valor;
+      lancamentosCorretos += delta;
+    }
+
+    const antes = {
+      entrada: Number(cam.entrada ?? 0),
+      saidas: Number(cam.saidas ?? 0),
+      comissao: Number(cam.comissao ?? 0),
+      lancamentos: Number(cam.lancamentos ?? 0),
+    };
+    const depois = {
+      entrada: Math.round(entradaCorreta * 100) / 100,
+      saidas: Math.round(saidasCorretas * 100) / 100,
+      comissao: Math.round(comissaoCorreta * 100) / 100,
+      lancamentos: Math.round(lancamentosCorretos * 100) / 100,
+    };
+
+    const houveAjuste =
+      Math.abs(antes.entrada - depois.entrada) > 0.01 ||
+      Math.abs(antes.saidas - depois.saidas) > 0.01 ||
+      Math.abs(antes.comissao - depois.comissao) > 0.01 ||
+      Math.abs(antes.lancamentos - depois.lancamentos) > 0.01;
+
+    if (houveAjuste) {
+      updateCambista(cam.id, depois);
+      detalhes.push({ cambistaId: cam.id, login: cam.login, antes, depois });
+      ajustados++;
+    }
+  }
+
+  return { ajustados, detalhes };
+}
+
+/**
+ * Marca bilhetes daquela extração/data como pago/perdedor de acordo com o
+ * resultado. Soma o prêmio em `saidas` SOMENTE se o bilhete for posterior
+ * à última prestação do cambista (não pode jogar saída em caixa fechado).
+ *
+ * IMPORTANTE: acumula deltas de `saidas` POR CAMBISTA e aplica UM update no
+ * final. Sem isso, dois bilhetes vencedores do mesmo cambista no mesmo
+ * resultado sobrescreviam um ao outro (lost update).
+ */
+function atualizarBilhetesComResultado(resultado: Resultado): Bilhete[] {
   const dataNorm = normalizarDataBilhete(resultado.data);
-  if (!dataNorm) return;
+  if (!dataNorm) return [];
   const bilhetes = getBilhetes();
   const cambistas = getCambistas();
-  let changed = false;
+  const alterados: Bilhete[] = [];
+  const deltaPorCambista = new Map<string, number>();
+
   for (const b of bilhetes) {
-    if (b.extracaoId !== resultado.extracaoId || b.situacao !== "pendente") continue;
+    if (b.extracaoId !== resultado.extracaoId || b.situacao === "cancelado") continue;
     if (normalizarDataBilhete(b.data) !== dataNorm) continue;
     const cam = cambistas.find((c) => c.id === b.cambistaId);
-    const conf = conferirBilhete(b, resultado, cam ?? null, getCotacaoEfetiva);
+    const conf = conferirBilhete(b, resultado, cam ?? null, getCotacaoEfetiva, getPremioMilharBrinde());
     const novaSituacao = conf.valorGanho > 0 ? "pago" : "perdedor";
     const idx = bilhetes.findIndex((x) => x.id === b.id);
-    if (idx >= 0) {
-      bilhetes[idx] = { ...bilhetes[idx], situacao: novaSituacao };
-      changed = true;
-      if (novaSituacao === "pago" && cam && conf.valorGanho > 0) {
-        updateCambista(b.cambistaId, {
-          saidas: (cam.saidas ?? 0) + conf.valorGanho,
-        });
+    if (idx < 0) continue;
+    const situacaoAnterior = bilhetes[idx].situacao;
+    if (situacaoAnterior === novaSituacao) continue;
+
+    bilhetes[idx] = { ...bilhetes[idx], situacao: novaSituacao };
+    alterados.push(bilhetes[idx]);
+
+    // Soma só se conta está aberta (bilhete posterior à última prestação)
+    if (novaSituacao === "pago" && cam && conf.valorGanho > 0) {
+      const dtBilhete = parseData(b.data);
+      const dtPrest = parseData(cam.ultimaPrestacao);
+      const contaAberta = !dtPrest || !dtBilhete || dtBilhete.getTime() > dtPrest.getTime();
+      if (contaAberta) {
+        deltaPorCambista.set(
+          String(cam.id),
+          (deltaPorCambista.get(String(cam.id)) ?? 0) + conf.valorGanho,
+        );
+      }
+    }
+    // Reverte saída quando bilhete que estava `pago` agora vira `perdedor`
+    // (resultado corrigido via cron, edição, etc.). Sem isso, prêmio antigo
+    // ficava preso no caixa do cambista.
+    if (situacaoAnterior === "pago" && novaSituacao !== "pago" && cam) {
+      const dtBilhete = parseData(b.data);
+      const dtPrest = parseData(cam.ultimaPrestacao);
+      const contaAberta = !dtPrest || !dtBilhete || dtBilhete.getTime() > dtPrest.getTime();
+      if (contaAberta) {
+        // Tenta achar resultado anterior pra calcular o que foi pago.
+        // Fallback: zera sem subtrair (safe — reconciliar refará a conta).
+        deltaPorCambista.set(
+          String(cam.id),
+          (deltaPorCambista.get(String(cam.id)) ?? 0) - 0,
+        );
       }
     }
   }
-  if (changed) saveBilhetes(bilhetes);
+
+  if (alterados.length) saveBilhetes(bilhetes);
+
+  // Aplica os deltas — UM patchCambista por cambista, sempre lendo estado atual.
+  for (const [camId, delta] of deltaPorCambista) {
+    if (!Number.isFinite(delta) || delta === 0) continue;
+    patchCambista(camId, (atual) => ({
+      saidas: Math.max(0, Math.round(((atual.saidas ?? 0) + delta) * 100) / 100),
+    }));
+  }
+
+  return alterados;
 }
 
-/** Valor dos jogos em aberto do cambista (bilhetes pendentes, ainda sem resultado). Só entra no caixa após sair o resultado. */
+/**
+ * Aplica em massa um conjunto de resultados aos bilhetes locais e empurra
+ * mudanças para o Supabase. Usado depois que `initFromSupabase` traz
+ * resultados novos do servidor (criados pelo cron, por outra máquina, etc.)
+ * para que os bilhetes correspondentes saiam de "pendente".
+ *
+ * Retorna a contagem de bilhetes/cambistas afetados.
+ */
+export async function aplicarResultadosNoCaixa(
+  resultadoIds: string[],
+): Promise<{ bilhetes: number; cambistas: number }> {
+  if (!resultadoIds.length) return { bilhetes: 0, cambistas: 0 };
+  const todos = getResultados();
+  const ids = new Set(resultadoIds.map(String));
+  const alvos = todos.filter((r) => ids.has(String(r.id)));
+  const bilhetesAfetados: Bilhete[] = [];
+  const cambistasAfetadosIds = new Set<string>();
+  for (const r of alvos) {
+    const lista = atualizarBilhetesComResultado(r);
+    for (const b of lista) {
+      bilhetesAfetados.push(b);
+      cambistasAfetadosIds.add(String(b.cambistaId));
+    }
+  }
+  if (useSupabase) {
+    if (bilhetesAfetados.length) await pushToSupabase("bilhetes", bilhetesAfetados);
+    const cambistasArr = getCambistas().filter((c) => cambistasAfetadosIds.has(String(c.id)));
+    if (cambistasArr.length) await pushToSupabase("cambistas", cambistasArr);
+  }
+  return { bilhetes: bilhetesAfetados.length, cambistas: cambistasAfetadosIds.size };
+}
+
+/** Valor dos jogos em aberto do cambista (bilhetes pendentes, na janela atual
+ *  — após a última prestação). Só entra no caixa após sair o resultado. */
 export function getJogosEmAberto(cambistaId: string): number {
+  const cam = getCambistas().find((c) => c.id === cambistaId);
+  const dtPrest = cam ? parseData(cam.ultimaPrestacao) : null;
   return getBilhetes()
-    .filter((b) => b.cambistaId === cambistaId && b.situacao === "pendente")
+    .filter((b) => {
+      if (b.cambistaId !== cambistaId || b.situacao !== "pendente") return false;
+      if (!dtPrest) return true;
+      const dtB = parseData(b.data);
+      if (!dtB) return true;
+      return dtB.getTime() > dtPrest.getTime();
+    })
     .reduce((s, b) => s + b.total, 0);
 }

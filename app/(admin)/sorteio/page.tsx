@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { getSorteios, addSorteio, updateSorteio, deleteSorteio } from "@/lib/store";
 import { addLog } from "@/lib/auditoria";
 import type { Sorteio as SorteioType } from "@/lib/types";
+import LoteriasTabs from "@/app/components/LoteriasTabs";
+import { hojeIsoDate, formatarDataBr, formatarDataHoraBr } from "@/lib/date-utils";
 
 export default function SorteioPage() {
   const [sorteios, setSorteios] = useState<SorteioType[]>(getSorteios());
@@ -11,7 +13,7 @@ export default function SorteioPage() {
   const [novo, setNovo] = useState(false);
   const [form, setForm] = useState<Partial<SorteioType>>({
     nome: "",
-    data: new Date().toISOString().slice(0, 10),
+    data: hojeIsoDate(),
     descricao: "",
     ativo: true,
   });
@@ -42,7 +44,7 @@ export default function SorteioPage() {
     }
     const dataStr = form.data?.includes("/")
       ? form.data
-      : dataFormToBr(form.data || new Date().toISOString().slice(0, 10));
+      : dataFormToBr(form.data || hojeIsoDate());
 
     if (novo) {
       addSorteio({
@@ -64,7 +66,7 @@ export default function SorteioPage() {
     setSorteios(getSorteios());
     setEditando(null);
     setNovo(false);
-    setForm({ nome: "", data: new Date().toISOString().slice(0, 10), descricao: "", ativo: true });
+    setForm({ nome: "", data: hojeIsoDate(), descricao: "", ativo: true });
   };
 
   const apagar = (s: SorteioType) => {
@@ -80,7 +82,7 @@ export default function SorteioPage() {
     setNovo(false);
     setForm({
       nome: s.nome,
-      data: dataBrToForm(s.data) || new Date().toISOString().slice(0, 10),
+      data: dataBrToForm(s.data) || hojeIsoDate(),
       descricao: s.descricao ?? "",
       ativo: s.ativo,
     });
@@ -91,7 +93,7 @@ export default function SorteioPage() {
     setNovo(true);
     setForm({
       nome: "",
-      data: new Date().toISOString().slice(0, 10),
+      data: hojeIsoDate(),
       descricao: "",
       ativo: true,
     });
@@ -99,8 +101,11 @@ export default function SorteioPage() {
 
   return (
     <div>
+      <h1 className="mb-6 text-2xl font-bold text-gray-800">Loterias</h1>
+      <LoteriasTabs />
+
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold text-gray-800">Sorteio</h1>
+        <h2 className="text-xl font-bold text-gray-800">Sorteio</h2>
         <button
           onClick={abrirNovo}
           className="rounded bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600"
@@ -139,7 +144,7 @@ export default function SorteioPage() {
               {sorteios.map((s) => (
                 <tr key={s.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium text-gray-800">{s.nome}</td>
-                  <td className="px-4 py-3 text-sm text-gray-600">{s.data}</td>
+                  <td className="px-4 py-3 text-sm text-gray-600">{formatarDataBr(s.data)}</td>
                   <td className="px-4 py-3">
                     <span
                       className={`rounded-full px-2 py-1 text-xs font-medium ${
@@ -149,7 +154,7 @@ export default function SorteioPage() {
                       {s.ativo ? "Ativo" : "Inativo"}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-500">{s.criadoEm}</td>
+                  <td className="px-4 py-3 text-sm text-gray-500">{formatarDataHoraBr(s.criadoEm)}</td>
                   <td className="px-4 py-3 text-right">
                     <button
                       onClick={() => abrirEditar(s)}

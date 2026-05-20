@@ -1,0 +1,57 @@
+{
+  "name": "Premiações",
+  "short_name": "Premiações",
+  "description": "App do cambista para vender bilhetes, acompanhar caixa e resultados.",
+  "id": "https://bichopro.org/cliente",
+  "start_url": "https://bichopro.org/cliente",
+  "scope": "https://bichopro.org/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#f97316",
+  "lang": "pt-BR",
+  "dir": "ltr",
+  "prefer_related_applications": false,
+  "categories": ["business", "finance", "productivity"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Vender",
+      "short_name": "Vender",
+      "url": "https://bichopro.org/cliente/vender",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Bilhetes",
+      "short_name": "Bilhetes",
+      "url": "https://bichopro.org/cliente/bilhete",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Resultados",
+      "short_name": "Resultados",
+      "url": "https://bichopro.org/cliente/resultado",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

@@ -7,20 +7,18 @@ import { getAdminCodigo, CODIGO_CHEFE } from "@/lib/auth";
 const menuItems = [
   { href: "/", label: "Prestar Contas" },
   { href: "/dashboard", label: "Dashboard" },
+  { href: "/atividade", label: "Atividade ao vivo" },
   { href: "/cambistas", label: "Cambistas" },
   { href: "/gerentes", label: "Gerentes" },
   { href: "/saldo", label: "Saldo" },
   { href: "/caixa", label: "Caixa" },
   { href: "/venda", label: "Venda" },
-  { href: "/relatorio", label: "Relatório" },
   { href: "/bilhetes", label: "Bilhetes" },
   { href: "/lancamentos", label: "Lançamentos" },
   { href: "/resultados", label: "Resultados" },
   { href: "/loterias", label: "Loterias" },
-  { href: "/instantanea", label: "Instantânea" },
-  { href: "/sorteio", label: "Sorteio" },
-  { href: "/comissoes", label: "Comissões" },
   { href: "/configuracoes", label: "Configurações" },
+  { href: "/branding", label: "Aparência" },
   { href: "/regulamento", label: "Regulamento" },
   { href: "/auditoria", label: "Auditoria" },
 ];
@@ -81,7 +79,8 @@ export default function Sidebar({ isOpen = true, onClose }: SidebarProps) {
               href={item.href}
               onClick={handleLinkClick}
               className={`rounded px-4 py-3 text-sm transition-colors ${
-                pathname === item.href
+                pathname === item.href ||
+                (item.href === "/loterias" && (pathname === "/instantanea" || pathname === "/sorteio"))
                   ? "bg-orange-500/90 text-white"
                   : "text-gray-300 hover:bg-gray-700 hover:text-white"
               }`}
