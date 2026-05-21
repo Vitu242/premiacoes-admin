@@ -2,6 +2,7 @@
 
 import type { Gerente, Cambista, Extracao, Bilhete, Lancamento, Resultado, Sorteio } from "./types";
 import { pushToSupabase, useSupabase, pushConfigToSupabase, deleteFromSupabase, pushCambistaPatch } from "./sync-supabase";
+import { nowServer } from "./server-time";
 import { CODIGO_CHEFE } from "./auth";
 import {
   COTACOES_PADROES_DEFAULT,
@@ -750,7 +751,11 @@ export function deleteSorteio(id: string): boolean {
 }
 
 export function extracaoAceitaApostas(encerra: string): boolean {
-  const now = new Date();
+  // CRÍTICO: usar nowServer() em vez de new Date(). O relógio do celular
+  // do cambista pode estar adiantado/atrasado em horas — só o relógio do
+  // servidor é confiável para decidir se a extração ainda está aberta.
+  // O offset é sincronizado via /api/time uma vez no boot e a cada 10 min.
+  const now = nowServer();
   const [h, m] = encerra.split(":").map(Number);
   const encerraDate = new Date(now);
   encerraDate.setHours(h, m, 0, 0);
@@ -760,11 +765,13 @@ export function extracaoAceitaApostas(encerra: string): boolean {
 /** Dias da semana: 0=Dom, 1=Seg, ..., 6=Sab */
 const DIA_SEMANA_KEYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"] as const;
 
-/** Verifica se a extração roda no dia da semana atual. Vazio/undefined = todos os dias. */
+/** Verifica se a extração roda no dia da semana atual. Vazio/undefined = todos os dias.
+ *  Usa relógio do servidor (nowServer) para evitar inconsistência se o
+ *  celular do cambista estiver com data errada. */
 export function extracaoRodaHoje(e: Pick<Extracao, "dias">): boolean {
   const dias = e.dias;
   if (!dias || dias.length === 0) return true;
-  const hoje = DIA_SEMANA_KEYS[new Date().getDay()];
+  const hoje = DIA_SEMANA_KEYS[nowServer().getDay()];
   return dias.includes(hoje);
 }
 

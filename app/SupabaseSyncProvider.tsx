@@ -5,6 +5,7 @@ import { useSupabase, initFromSupabase } from "@/lib/sync-supabase";
 import { SYNC_COMPLETE_EVENT } from "@/lib/use-config-refresh";
 import { startRealtime } from "@/lib/realtime";
 import { startSyncQueueLoop, flushSyncQueue } from "@/lib/sync-queue";
+import { startServerTimeSync } from "@/lib/server-time";
 
 const SYNC_TIMEOUT_MS = 8000;
 const REALTIME_DEBOUNCE_MS = 800;
@@ -25,6 +26,9 @@ export function SupabaseSyncProvider({ children }: { children: React.ReactNode }
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    // Sincroniza o relógio com o servidor o mais cedo possível. Validações
+    // de horário (ex.: encerramento de extração) passam a usar nowServer().
+    startServerTimeSync();
     // Inicia o loop de reenvio offline → online sempre, mesmo sem realtime ativo
     startSyncQueueLoop();
     if (!useSupabase) {

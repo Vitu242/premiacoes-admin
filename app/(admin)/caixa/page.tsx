@@ -204,26 +204,21 @@ export default function CaixaPage() {
       </div>
 
       <p className="mb-1 text-sm text-gray-600">
-        <strong>Saldo Cambista</strong> = Entrada − Saída + Lançamentos − Comissão ·{" "}
-        <strong>Saldo Banca</strong> = Entrada − Saída − Comissão (lançamentos não entram
-        no resultado da banca).
+        <strong>Saldo Banca</strong> = Entrada − Saída − Comissão. Lançamentos
+        (adiantamento/retirada) afetam só a prestação com o cambista, não o
+        resultado da banca, por isso não entram nesta tela.
       </p>
       <p className="mb-4 text-xs text-gray-500">
         Bilhetes pendentes nesta seleção: <strong>{bilhetesPendentes}</strong> · Jogos em
         aberto (geral): <strong>{formatarMoeda(totalGeral.jogosAberto)}</strong>
       </p>
 
-      {/* Cards rápidos do total geral */}
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+      {/* Cards rápidos do total geral — Lançamentos NÃO aparece aqui (não
+          afeta resultado da banca; vê-lo só confunde quem quer saber lucro). */}
+      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <CardKPI label="Entrada" tone="green" valor={totalGeral.entrada} />
         <CardKPI label="Saída" tone="rose" valor={totalGeral.saidas} />
         <CardKPI label="Comissão" tone="amber" valor={totalGeral.comissao} />
-        <CardKPI
-          label="Lançamentos"
-          tone={totalGeral.lancamentos >= 0 ? "green" : "rose"}
-          valor={totalGeral.lancamentos}
-        />
-        <CardKPI label="Saldo Cambista" tone="neutral" valor={totalGeral.saldoCambista} />
         <CardKPI
           label="Saldo Banca"
           tone={totalGeral.bancaLiquida >= 0 ? "green" : "rose"}
@@ -248,7 +243,9 @@ export default function CaixaPage() {
         ))}
       </div>
 
-      {/* TOTAL GERAL DA BANCA */}
+      {/* TOTAL GERAL DA BANCA — colunas focadas no resultado da banca:
+          Entrada, Saída, Comissão, Saldo Banca. Lançamentos (adiantamento /
+          retirada com cambista) não entram porque distorceriam o lucro. */}
       {grupos.length > 1 && (
         <div className="mt-6 overflow-x-auto rounded-lg border border-emerald-300 bg-white shadow">
           <div className="bg-emerald-600 px-4 py-2 text-center text-sm font-bold uppercase tracking-wide text-white">
@@ -261,8 +258,6 @@ export default function CaixaPage() {
                 <th className="px-3 py-2 text-right">Entrada</th>
                 <th className="px-3 py-2 text-right">Saída</th>
                 <th className="px-3 py-2 text-right">Comissões</th>
-                <th className="px-3 py-2 text-right">Lançamentos</th>
-                <th className="px-3 py-2 text-right">Saldo Cambista</th>
                 <th className="px-3 py-2 text-right">Saldo Banca</th>
               </tr>
             </thead>
@@ -277,16 +272,6 @@ export default function CaixaPage() {
                 </td>
                 <td className="px-3 py-3 text-right text-amber-700">
                   {formatarMoeda(totalGeral.comissao)}
-                </td>
-                <td
-                  className={`px-3 py-3 text-right ${corValor(totalGeral.lancamentos)}`}
-                >
-                  {formatarMoeda(totalGeral.lancamentos)}
-                </td>
-                <td
-                  className={`px-3 py-3 text-right ${corValor(totalGeral.saldoCambista)}`}
-                >
-                  {formatarMoeda(totalGeral.saldoCambista)}
                 </td>
                 <td
                   className={`px-3 py-3 text-right ${corValor(totalGeral.bancaLiquida)}`}
@@ -330,15 +315,13 @@ function TabelaGerente({
               <th className="px-3 py-2 text-right">Entrada</th>
               <th className="px-3 py-2 text-right">Saída</th>
               <th className="px-3 py-2 text-right">Comissão</th>
-              <th className="px-3 py-2 text-right">Lançamentos</th>
-              <th className="px-3 py-2 text-right">Saldo Cambista</th>
               <th className="px-3 py-2 text-right">Saldo Banca</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {linhas.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-3 py-6 text-center text-xs text-gray-400">
+                <td colSpan={6} className="px-3 py-6 text-center text-xs text-gray-400">
                   Este gerente não tem cambistas cadastrados.
                 </td>
               </tr>
@@ -361,16 +344,6 @@ function TabelaGerente({
                   {formatarMoeda(l.resumo.comissao)}
                 </td>
                 <td
-                  className={`px-3 py-2 text-right tabular-nums ${corValor(l.resumo.lancamentos)}`}
-                >
-                  {formatarMoeda(l.resumo.lancamentos)}
-                </td>
-                <td
-                  className={`px-3 py-2 text-right font-semibold tabular-nums ${corValor(l.saldoCambista)}`}
-                >
-                  {formatarMoeda(l.saldoCambista)}
-                </td>
-                <td
                   className={`px-3 py-2 text-right font-semibold tabular-nums ${corValor(l.saldoBanca)}`}
                 >
                   {formatarMoeda(l.saldoBanca)}
@@ -391,16 +364,6 @@ function TabelaGerente({
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums">
                   {formatarMoeda(totais.comissao)}
-                </td>
-                <td
-                  className={`px-3 py-2 text-right tabular-nums ${corValor(totais.lancamentos)}`}
-                >
-                  {formatarMoeda(totais.lancamentos)}
-                </td>
-                <td
-                  className={`px-3 py-2 text-right tabular-nums ${corValor(totais.saldoCambista)}`}
-                >
-                  {formatarMoeda(totais.saldoCambista)}
                 </td>
                 <td
                   className={`px-3 py-2 text-right tabular-nums ${corValor(totais.saldoBanca)}`}
