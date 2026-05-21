@@ -1,7 +1,7 @@
 "use client";
 
 import type { Gerente, Cambista, Extracao, Bilhete, Lancamento, Resultado, Sorteio } from "./types";
-import { pushToSupabase, useSupabase, pushConfigToSupabase, deleteFromSupabase } from "./sync-supabase";
+import { pushToSupabase, useSupabase, pushConfigToSupabase, deleteFromSupabase, pushCambistaPatch } from "./sync-supabase";
 import { CODIGO_CHEFE } from "./auth";
 import {
   COTACOES_PADROES_DEFAULT,
@@ -463,7 +463,12 @@ export function updateCambista(id: string, dados: Partial<Cambista>): void {
     if (typeof copia.login === "string") copia.login = normalizeLogin(copia.login);
     lista[idx] = { ...lista[idx], ...copia };
     saveCambistas(lista);
-    if (useSupabase) void pushToSupabase("cambistas", [lista[idx]]);
+    // CRÍTICO: enviar SÓ os campos alterados via UPDATE parcial. Antes
+    // mandávamos o registro inteiro via upsert, o que sobrescrevia campos
+    // que outro dispositivo tinha mudado entre tanto (ex.: admin aumentou
+    // saldo enquanto o cliente fazia uma venda — venda enviava upsert com
+    // saldo antigo e zerava o aumento).
+    if (useSupabase) void pushCambistaPatch(id, copia);
   }
 }
 
@@ -471,6 +476,10 @@ export function updateCambista(id: string, dados: Partial<Cambista>): void {
  * Read-modify-write atômico de um cambista. A função recebe o estado MAIS
  * RECENTE (relido do storage no momento) e devolve a versão atualizada.
  * Evita "lost update" quando vários callbacks somam em campos como `saidas`.
+ *
+ * Sincronização: empurra apenas os campos retornados pelo `fn` (PATCH),
+ * não o registro inteiro — isso evita que um patch local sobrescreva
+ * mudanças feitas em outro dispositivo em campos que esse `fn` não tocou.
  */
 export function patchCambista(
   id: string,
@@ -485,7 +494,7 @@ export function patchCambista(
   if (typeof proxima.login === "string") proxima.login = normalizeLogin(proxima.login);
   lista[idx] = proxima;
   saveCambistas(lista);
-  if (useSupabase) void pushToSupabase("cambistas", [proxima]);
+  if (useSupabase) void pushCambistaPatch(id, patch);
   return proxima;
 }
 
@@ -950,6 +959,72 @@ export function getSaldoDisponivel(cambista: Cambista): number {
 /** Total a prestar = Entrada - Saídas - Comissão + Lançamentos (fórmula do caixa) */
 export function calcularTotalCaixa(c: Pick<Cambista, "entrada" | "saidas" | "comissao" | "lancamentos">): number {
   return c.entrada - c.saidas - c.comissao + c.lancamentos;
+}
+
+/**
+ * Calcula o caixa atual (após a última prestação) DERIVANDO dos bilhetes
+ * e lançamentos locais. Use isto em vez de `cam.entrada / cam.saidas / ...`
+ * para EXIBIÇÃO — esses campos são atualizados via upsert e podem perder
+ * incrementos quando o mesmo cambista usa o app em 2 dispositivos
+ * simultaneamente (último write ganha).
+ *
+ * O cálculo derivado SEMPRE é consistente entre dispositivos porque os
+ * bilhetes têm IDs únicos e nunca são sobrescritos uns pelos outros — só
+ * basta o sync ter trazido todos pra cá.
+ */
+export function calcularResumoAtualCambista(
+  cambistaId: string,
+): { entrada: number; saidas: number; comissao: number; lancamentos: number; jogosAberto: number } {
+  const cam = getCambistas().find((c) => c.id === cambistaId);
+  if (!cam) {
+    return { entrada: 0, saidas: 0, comissao: 0, lancamentos: 0, jogosAberto: 0 };
+  }
+  const ultMs = cam.ultimaPrestacao
+    ? parseData(cam.ultimaPrestacao)?.getTime() ?? 0
+    : 0;
+
+  let entrada = 0;
+  let saidas = 0;
+  let comissao = 0;
+  let jogosAberto = 0;
+  for (const b of getBilhetes()) {
+    if (b.cambistaId !== cambistaId) continue;
+    if (b.situacao === "cancelado") continue;
+    const d = parseData(b.data);
+    if (!d || d.getTime() <= ultMs) continue;
+    entrada += b.total;
+    comissao += calcularComissaoBilhete(b, cam);
+    if (b.situacao === "pendente") jogosAberto += b.total;
+    if (b.situacao === "pago") {
+      const r = getResultadoByExtracaoData(b.extracaoId, b.data);
+      if (r) {
+        const conf = conferirBilhete(
+          b,
+          r,
+          cam,
+          getCotacaoEfetiva,
+          getPremioMilharBrinde(),
+        );
+        saidas += conf.valorGanho;
+      }
+    }
+  }
+
+  let lancamentos = 0;
+  for (const l of getLancamentos()) {
+    if (l.cambistaId !== cambistaId) continue;
+    const d = parseData(l.data);
+    if (!d || d.getTime() <= ultMs) continue;
+    lancamentos += l.tipo === "adiantar" ? l.valor : -l.valor;
+  }
+
+  return {
+    entrada: Math.round(entrada * 100) / 100,
+    saidas: Math.round(saidas * 100) / 100,
+    comissao: Math.round(comissao * 100) / 100,
+    lancamentos: Math.round(lancamentos * 100) / 100,
+    jogosAberto: Math.round(jogosAberto * 100) / 100,
+  };
 }
 
 /** Verifica se o cambista pode realizar uma venda do valor informado (tem saldo disponível). */

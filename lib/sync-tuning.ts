@@ -140,3 +140,13 @@ export function resetTuning(): void {
   estado.ultimaFalha = 0;
   estado.ultimoSucesso = Date.now();
 }
+
+/** Quanto tempo (ms) o último sucesso foi registrado. */
+export function msDesdeUltimoSucesso(): number {
+  return Date.now() - estado.ultimoSucesso;
+}
+
+/** Quanto tempo (ms) a última falha foi registrada (0 se nunca falhou). */
+export function msDesdeUltimaFalha(): number {
+  return estado.ultimaFalha === 0 ? 0 : Date.now() - estado.ultimaFalha;
+}

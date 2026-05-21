@@ -5,13 +5,13 @@ import { useRouter } from "next/navigation";
 import {
   getCambistas,
   calcularTotalCaixa,
-  getJogosEmAberto,
   getBilhetes,
   getLancamentos,
   getResultadoByExtracaoData,
   getCotacaoEfetiva,
   getPremioMilharBrinde,
   calcularComissaoBilhete,
+  calcularResumoAtualCambista,
 } from "@/lib/store";
 import { conferirBilhete } from "@/lib/conferencia";
 import { parseDataPtBrOuIso, startOfDay, endOfDay, isoDateInputToDate, hojeIsoDate } from "@/lib/date-utils";
@@ -107,13 +107,12 @@ export default function ClienteCaixaPage() {
   const resumo = useMemo<ResumoCaixa | null>(() => {
     if (!cambista) return null;
     if (periodo === "atual") {
-      return {
-        entrada: cambista.entrada ?? 0,
-        saidas: cambista.saidas ?? 0,
-        comissao: cambista.comissao ?? 0,
-        lancamentos: cambista.lancamentos ?? 0,
-        jogosAberto: cambistaId ? getJogosEmAberto(cambistaId) : 0,
-      };
+      // CRÍTICO: derivar do bilhetes/lançamentos em vez de ler cambista.entrada
+      // resolve a divergência entre dispositivos. Os contadores no registro do
+      // cambista podem perder incrementos quando o mesmo login está aberto em
+      // dois aparelhos (último upsert sobrescreve o outro). Os bilhetes
+      // individuais são imutáveis, então o cálculo derivado é determinístico.
+      return calcularResumoAtualCambista(cambistaId ?? cambista.id);
     }
     let ini: Date | null = null;
     let fim: Date | null = null;

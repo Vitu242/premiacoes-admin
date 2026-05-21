@@ -878,6 +878,80 @@ export async function deleteFromSupabase(
   await enqueue({ kind: "delete", table, match: { id }, id });
 }
 
+/**
+ * Envia APENAS os campos alterados de um cambista (UPDATE parcial em vez de
+ * UPSERT do registro inteiro).
+ *
+ * Por que isso é crítico:
+ *   - O upsert manda o registro inteiro. Se o dispositivo tem cópia local
+ *     desatualizada de algum campo (ex.: saldo definido por outro admin
+ *     há poucos segundos), esse campo volta ao valor antigo no servidor.
+ *   - O UPDATE parcial só toca nos campos que mudaram, evitando que
+ *     incrementos/edições em paralelo se sobrescrevam entre dispositivos.
+ *
+ * IMPORTANTE: este caminho só funciona quando o registro JÁ EXISTE no
+ * servidor (caso normal — o cambista é criado via `addCambista` que faz
+ * upsert antes). Se a fila ainda não processou o upsert inicial, o
+ * `compactQueue` mescla este UPDATE no upsert pendente automaticamente.
+ */
+export async function pushCambistaPatch(
+  id: string,
+  patch: Partial<Cambista>,
+): Promise<void> {
+  if (!id) return;
+  if (!patch || Object.keys(patch).length === 0) return;
+  const dbPatch = camFieldsToDb(patch);
+  if (Object.keys(dbPatch).length === 0) return;
+  const { enqueue } = await import("./sync-queue");
+  await enqueue({
+    kind: "update",
+    table: "cambistas",
+    match: { id },
+    payload: dbPatch,
+  });
+}
+
+/** Mapeia chaves do tipo `Cambista` para colunas do banco. Só inclui as
+ *  colunas presentes no patch, então campos não tocados não são enviados. */
+function camFieldsToDb(p: Partial<Cambista>): Record<string, unknown> {
+  const map: Record<keyof Cambista | string, string> = {
+    gerenteId: "gerente_id",
+    codigo: "codigo",
+    tipo: "tipo",
+    login: "login",
+    senha: "senha",
+    saldo: "saldo",
+    comissaoMilhar: "comissao_milhar",
+    comissaoCentena: "comissao_centena",
+    comissaoDezena: "comissao_dezena",
+    comissaoGrupo: "comissao_grupo",
+    cotacaoM: "cotacao_m",
+    cotacaoC: "cotacao_c",
+    cotacaoD: "cotacao_d",
+    cotacaoG: "cotacao_g",
+    cotacoes: "cotacoes",
+    milharBrinde: "milhar_brinde",
+    endereco: "endereco",
+    telefone: "telefone",
+    descricao: "descricao",
+    status: "status",
+    risco: "risco",
+    entrada: "entrada",
+    saidas: "saidas",
+    comissao: "comissao",
+    lancamentos: "lancamentos",
+    ultimaPrestacao: "ultima_prestacao",
+    ultimoAcesso: "ultimo_acesso",
+  };
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(p)) {
+    if (k === "id") continue;
+    const dbKey = map[k as keyof typeof map];
+    if (dbKey) out[dbKey] = v ?? null;
+  }
+  return out;
+}
+
 /** Envia a config (premioMax, tempoCancelamentoMinutos) para o Supabase com retry/queue. */
 export async function pushConfigToSupabase(value: Record<string, unknown>): Promise<void> {
   if (typeof value !== "object") return;

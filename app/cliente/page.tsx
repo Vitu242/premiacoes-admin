@@ -10,6 +10,7 @@ import {
   getExtracoes,
   extracaoAceitaApostas,
   extracaoRodaHoje,
+  calcularResumoAtualCambista,
 } from "@/lib/store";
 import { useConfigRefresh, useVisibilityRefresh } from "@/lib/use-config-refresh";
 import { useTheme } from "@/app/components/ThemeProvider";
@@ -157,11 +158,23 @@ export default function ClienteDashboardPage() {
       // derrubar o usuário para o login.
       return;
     }
+    // CRÍTICO: derivar `entrada` dos bilhetes em vez de ler cam.entrada.
+    // O campo cam.entrada é incrementado e enviado por upsert; quando o
+    // mesmo login está aberto em 2 dispositivos, um aparelho pode mostrar
+    // valor desatualizado (último upsert vence). Já o cálculo derivado é
+    // determinístico desde que os bilhetes individuais estejam sincronizados.
+    let entradaDerivada = 0;
+    try {
+      const resumoAtual = calcularResumoAtualCambista(cam.id);
+      entradaDerivada = resumoAtual.entrada;
+    } catch {
+      entradaDerivada = cam.entrada ?? 0;
+    }
     setCambista({
       id: cam.id,
       login: cam.login,
       saldo: cam.saldo,
-      entrada: cam.entrada,
+      entrada: entradaDerivada,
       tipo: cam.tipo,
     });
     try { setResumo(resumoDoCambista(cam.id)); } catch {}

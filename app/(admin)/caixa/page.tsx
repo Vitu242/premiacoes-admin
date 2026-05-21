@@ -5,8 +5,8 @@ import {
   getCambistasPorCodigo,
   getGerentesPorCodigo,
   calcularTotalCaixa,
-  getJogosEmAberto,
   getBilhetes,
+  calcularResumoAtualCambista,
 } from "@/lib/store";
 import { getAdminCodigo } from "@/lib/auth";
 import { useVisibilityRefresh } from "@/lib/use-config-refresh";
@@ -31,6 +31,16 @@ function corValor(v: number): string {
  */
 interface LinhaCambista {
   cambista: Cambista;
+  /** Resumo derivado dos bilhetes/lançamentos. Substitui os campos
+   *  cam.entrada/saidas/comissao/lancamentos que são suscetíveis a perda
+   *  de updates entre dispositivos. */
+  resumo: {
+    entrada: number;
+    saidas: number;
+    comissao: number;
+    lancamentos: number;
+    jogosAberto: number;
+  };
   qtd: number;
   jogosAberto: number;
   saldoCambista: number;
@@ -109,12 +119,16 @@ export default function CaixaPage() {
     return gerentesVisiveis.map((g) => {
       const meusCambistas = cambistas.filter((c) => c.gerenteId === g.id);
       const linhas: LinhaCambista[] = meusCambistas.map((c) => {
-        const saldoCambista = calcularTotalCaixa(c);
-        const saldoBanca = c.entrada - c.saidas - c.comissao;
+        // Sempre derivar — campos cam.entrada/saidas/etc podem perder updates
+        // quando o cambista usa o app em 2 dispositivos simultaneamente.
+        const resumo = calcularResumoAtualCambista(c.id);
+        const saldoCambista = calcularTotalCaixa(resumo);
+        const saldoBanca = resumo.entrada - resumo.saidas - resumo.comissao;
         return {
           cambista: c,
+          resumo,
           qtd: qtdPorCambista.get(c.id) ?? 0,
-          jogosAberto: getJogosEmAberto(c.id),
+          jogosAberto: resumo.jogosAberto,
           saldoCambista,
           saldoBanca,
         };
@@ -123,10 +137,10 @@ export default function CaixaPage() {
       const totais = linhas.reduce<TotalGerente>((acc, l) => {
         acc.qtd += l.qtd;
         acc.jogosAberto += l.jogosAberto;
-        acc.entrada += l.cambista.entrada;
-        acc.saidas += l.cambista.saidas;
-        acc.comissao += l.cambista.comissao;
-        acc.lancamentos += l.cambista.lancamentos;
+        acc.entrada += l.resumo.entrada;
+        acc.saidas += l.resumo.saidas;
+        acc.comissao += l.resumo.comissao;
+        acc.lancamentos += l.resumo.lancamentos;
         acc.saldoCambista += l.saldoCambista;
         acc.saldoBanca += l.saldoBanca;
         return acc;
@@ -338,18 +352,18 @@ function TabelaGerente({
                   {l.qtd}
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums text-gray-700">
-                  {formatarMoeda(l.cambista.entrada)}
+                  {formatarMoeda(l.resumo.entrada)}
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums text-gray-700">
-                  {formatarMoeda(l.cambista.saidas)}
+                  {formatarMoeda(l.resumo.saidas)}
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums text-gray-700">
-                  {formatarMoeda(l.cambista.comissao)}
+                  {formatarMoeda(l.resumo.comissao)}
                 </td>
                 <td
-                  className={`px-3 py-2 text-right tabular-nums ${corValor(l.cambista.lancamentos)}`}
+                  className={`px-3 py-2 text-right tabular-nums ${corValor(l.resumo.lancamentos)}`}
                 >
-                  {formatarMoeda(l.cambista.lancamentos)}
+                  {formatarMoeda(l.resumo.lancamentos)}
                 </td>
                 <td
                   className={`px-3 py-2 text-right font-semibold tabular-nums ${corValor(l.saldoCambista)}`}

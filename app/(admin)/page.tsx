@@ -7,6 +7,7 @@ import {
   prestarContasCambista,
   calcularTotalCaixa,
   reconciliarCaixaCambistas,
+  calcularResumoAtualCambista,
 } from "@/lib/store";
 import { addLog } from "@/lib/auditoria";
 import { getAdminCodigo } from "@/lib/auth";
@@ -229,23 +230,28 @@ export default function PrestarContasPage() {
               </tr>
             ) : null}
             {filtrar.map((c) => {
-              const total = calcularTotalCaixa(c);
+              // Sempre derivar dos bilhetes/lançamentos. Os campos
+              // c.entrada/saidas/comissao/lancamentos podem perder updates
+              // quando o cambista usa o app em 2 dispositivos (last write
+              // wins no upsert do Supabase). O cálculo derivado é estável.
+              const resumo = calcularResumoAtualCambista(c.id);
+              const total = calcularTotalCaixa(resumo);
               return (
                 <tr key={c.id} className="hover:bg-gray-50">
                   <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-900">
                     {c.login}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
-                    {formatarMoeda(c.entrada)}
+                    {formatarMoeda(resumo.entrada)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
-                    {formatarMoeda(c.saidas)}
+                    {formatarMoeda(resumo.saidas)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
-                    {formatarMoeda(c.comissao)}
+                    {formatarMoeda(resumo.comissao)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
-                    {formatarMoeda(c.lancamentos)}
+                    {formatarMoeda(resumo.lancamentos)}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
                     <span
@@ -292,7 +298,10 @@ export default function PrestarContasPage() {
       />
 
       {/* Modal Prestar Contas - detalhe */}
-      {detalhe && (
+      {detalhe && (() => {
+        const resumoDetalhe = calcularResumoAtualCambista(detalhe.id);
+        const totalDetalhe = calcularTotalCaixa(resumoDetalhe);
+        return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-md overflow-hidden rounded-lg bg-white text-slate-900 shadow-xl dark:bg-slate-800 dark:text-slate-100">
             <div className="bg-green-600 px-6 py-4">
@@ -303,33 +312,33 @@ export default function PrestarContasPage() {
             <div className="space-y-2 p-6">
               <div className="flex justify-between">
                 <span>Entrada</span>
-                <span>{formatarMoeda(detalhe.entrada)}</span>
+                <span>{formatarMoeda(resumoDetalhe.entrada)}</span>
               </div>
               <div className="flex justify-between">
                 <span>Saídas</span>
-                <span>{formatarMoeda(detalhe.saidas)}</span>
+                <span>{formatarMoeda(resumoDetalhe.saidas)}</span>
               </div>
               <div className="flex justify-between">
                 <span>Comissão</span>
-                <span>{formatarMoeda(detalhe.comissao)}</span>
+                <span>{formatarMoeda(resumoDetalhe.comissao)}</span>
               </div>
               <div className="flex justify-between">
                 <span>Lançamentos</span>
-                <span>{formatarMoeda(detalhe.lancamentos)}</span>
+                <span>{formatarMoeda(resumoDetalhe.lancamentos)}</span>
               </div>
               <div className="flex justify-between border-t border-gray-200 pt-2 font-semibold dark:border-slate-600">
                 <span>Total</span>
                 <span
                   style={{
                     color:
-                      calcularTotalCaixa(detalhe) > 0
+                      totalDetalhe > 0
                         ? "#16a34a"
-                        : calcularTotalCaixa(detalhe) < 0
+                        : totalDetalhe < 0
                           ? "#dc2626"
                           : "currentColor",
                   }}
                 >
-                  {formatarMoeda(calcularTotalCaixa(detalhe))}
+                  {formatarMoeda(totalDetalhe)}
                 </span>
               </div>
             </div>
@@ -354,7 +363,8 @@ export default function PrestarContasPage() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

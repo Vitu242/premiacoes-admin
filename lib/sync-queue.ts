@@ -21,6 +21,7 @@ import {
   isErroSobrecarga,
   registrarFalha,
   registrarSucesso,
+  resetTuning,
 } from "./sync-tuning";
 
 export type { SyncOp };
@@ -203,6 +204,23 @@ function compactQueue(): void {
           row: { ...anterior.row, ...op.payload, id },
           item,
         });
+        return;
+      }
+      // Update sobre update anterior: MESCLAR os payloads em vez de
+      // sobrescrever. Sem isso, se o caller chamou updateCambista com
+      // {entrada:50} e logo depois com {comissao:10}, o segundo update
+      // descartava o primeiro e a `entrada` no servidor ficaria intacta.
+      if (anterior?.kind === "update") {
+        const opAnterior = anterior.item.op as Extract<SyncOp, { kind: "update" }>;
+        const merged: Record<string, unknown> = {
+          ...opAnterior.payload,
+          ...op.payload,
+        };
+        const novoItem: QueueItem = {
+          ...item,
+          op: { ...op, payload: merged },
+        };
+        ultimaPorId.set(chave, { kind: "update", pos, item: novoItem });
         return;
       }
       ultimaPorId.set(chave, { kind: "update", pos, item });
@@ -414,11 +432,22 @@ async function executar(op: SyncOp): Promise<void> {
 // envios e fariam saveQueue corrida (último a salvar perde itens).
 let flushInFlight: Promise<{ ok: number; pendentes: number }> | null = null;
 
-async function flush(): Promise<{ ok: number; pendentes: number }> {
+interface FlushOptions {
+  /** Ignora circuit breaker e navigator.onLine; sempre tenta enviar.
+   *  Usado quando o usuário clica explicitamente em "Sincronizar agora". */
+  force?: boolean;
+}
+
+async function flush(opts: FlushOptions = {}): Promise<{ ok: number; pendentes: number }> {
   if (flushInFlight) return flushInFlight;
+  if (opts.force) {
+    // Quando o usuário pediu sincronização explícita, derruba o circuit
+    // breaker e zera o estado de tuning — o usuário diz "tenta agora".
+    resetTuning();
+  }
   flushInFlight = (async () => {
     try {
-      return await flushUnlocked();
+      return await flushUnlocked(opts);
     } finally {
       flushInFlight = null;
     }
@@ -426,15 +455,16 @@ async function flush(): Promise<{ ok: number; pendentes: number }> {
   return flushInFlight;
 }
 
-async function flushUnlocked(): Promise<{ ok: number; pendentes: number }> {
+async function flushUnlocked(opts: FlushOptions = {}): Promise<{ ok: number; pendentes: number }> {
   if (typeof window === "undefined") return { ok: 0, pendentes: 0 };
   if (!useSupabase || !supabase) return { ok: 0, pendentes: loadQueue().length };
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+  if (!opts.force && typeof navigator !== "undefined" && navigator.onLine === false) {
     return { ok: 0, pendentes: loadQueue().length };
   }
   // Circuit breaker: se há 3+ falhas seguidas recentes, espera ~60s antes
   // de tentar de novo (evita martelar o banco quando ele está degradado).
-  if (isCircuitOpen()) {
+  // `force` (clique manual em "Sincronizar agora") ignora o breaker.
+  if (!opts.force && isCircuitOpen()) {
     return { ok: 0, pendentes: loadQueue().length };
   }
 
@@ -616,7 +646,10 @@ export function startSyncQueueLoop() {
   started = true;
   compactQueue();
   flush().catch(() => {});
-  // Polling adaptativo: usa o intervalo do tuning atual, com mínimo de 10s.
+
+  // Polling adaptativo: tick rápido nas primeiras tentativas após uma falha
+  // e desacelera se o problema persistir. Pra "Failed to fetch" (rede caindo
+  // brevemente) o item normalmente sai no primeiro retry de 5s.
   const tick = () => {
     const slowUntil = (window as unknown as { __premiacoes_sync_slow_until?: number })
       .__premiacoes_sync_slow_until;
@@ -629,14 +662,55 @@ export function startSyncQueueLoop() {
       .finally(schedule);
   };
   const schedule = () => {
-    const intervalo = Math.max(RETRY_INTERVAL_MIN, getTuning().retryIntervalMs);
+    const fila = loadQueue();
+    const tuning = getTuning();
+    let intervalo: number;
+    if (fila.length === 0) {
+      // Sem itens — pode esperar mais.
+      intervalo = Math.max(RETRY_INTERVAL_MIN, tuning.retryIntervalMs);
+    } else {
+      // Com itens pendentes, retry rápido nas primeiras tentativas.
+      const maxTries = fila.reduce((m, x) => Math.max(m, x.tries), 0);
+      if (maxTries <= 1) intervalo = 5_000;
+      else if (maxTries <= 3) intervalo = 15_000;
+      else intervalo = Math.min(60_000, tuning.retryIntervalMs);
+    }
     setTimeout(tick, intervalo);
   };
   schedule();
-  window.addEventListener("online", () => flush().catch(() => {}));
+
+  // Quando rede volta, o problema típico ("Failed to fetch") some.
+  // Reseta o tuning para o estado inicial e força flush imediato.
+  window.addEventListener("online", () => {
+    resetTuning();
+    flush({ force: true }).catch(() => {});
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") flush().catch(() => {});
   });
+  // pageshow cobre o caso do navegador restaurar a aba do BFCache
+  // (PWA reabrindo após app estar minimizado), em que `online` não dispara.
+  window.addEventListener("pageshow", () => {
+    flush().catch(() => {});
+  });
+
+  // Watchdog: se houver itens pendentes há mais de 90s sem progresso,
+  // reseta o tuning e força um flush. Garante recuperação em situações
+  // onde o circuit breaker ficou travado (modo "fora") apesar da rede já
+  // ter voltado — antes só se resolvia recarregando a página.
+  setInterval(() => {
+    const fila = loadQueue();
+    if (fila.length === 0) return;
+    const agora = Date.now();
+    const maisAntigo = fila.reduce(
+      (m, x) => Math.min(m, x.enqueuedAt || agora),
+      agora,
+    );
+    if (agora - maisAntigo > 90_000) {
+      resetTuning();
+      flush({ force: true }).catch(() => {});
+    }
+  }, 60_000);
 }
 
 export { flush as flushSyncQueue };

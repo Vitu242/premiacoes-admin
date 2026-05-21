@@ -87,7 +87,10 @@ export function SupabaseStatus() {
       let restantes = getSyncQueueSize();
       let rodadas = 0;
       while (restantes > 0 && rodadas < 30) {
-        await flushSyncQueue();
+        // `force: true` ignora o circuit breaker — o usuário clicou em
+        // "Sincronizar agora", então tentamos enviar mesmo se o sistema
+        // tinha desacelerado por falhas anteriores.
+        await flushSyncQueue({ force: true });
         restantes = getSyncQueueSize();
         rodadas++;
         if (restantes > 0) await new Promise((r) => setTimeout(r, 500));
