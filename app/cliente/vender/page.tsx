@@ -132,6 +132,7 @@ export default function ClienteVenderPage() {
   const [sucesso, setSucesso] = useState<{ codigo: string } | null>(null);
   const [enviandoVenda, setEnviandoVenda] = useState(false);
   const [carrinho, setCarrinho] = useState<ItemCarrinho[]>([]);
+  const [mostraTabelaGrupos, setMostraTabelaGrupos] = useState(false);
   /** Quando o bilhete tem múltiplos itens, o cliente pode optar entre:
    *   "individual" = cada item mantém o valor digitado individualmente;
    *   "dividir_total" = soma de valoresDigitados é dividida em partes iguais entre todos os itens. */
@@ -1000,6 +1001,13 @@ export default function ClienteVenderPage() {
           >
             Continuar
           </button>
+          <button
+            type="button"
+            onClick={() => setMostraTabelaGrupos(true)}
+            className="mt-2 w-full rounded-xl border border-slate-300 bg-white py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            Exibir grupos e dezenas
+          </button>
         </div>
       )}
 
@@ -1293,6 +1301,138 @@ export default function ClienteVenderPage() {
         </div>
       )}
       </div>
+
+      {/* Modal: tabela de grupos e dezenas (jogo do bicho) */}
+      {mostraTabelaGrupos && (
+        <TabelaGruposModal onClose={() => setMostraTabelaGrupos(false)} />
+      )}
     </div>
   );
+}
+
+/**
+ * Modal mostrando a tabela completa do jogo do bicho:
+ * 25 grupos × 4 dezenas cada (01-100). Útil para o cliente consultar
+ * a correspondência entre número/grupo/animal enquanto faz a aposta.
+ */
+const BICHOS_TABELA: Array<{ num: number; nome: string }> = [
+  { num: 1, nome: "Avestruz" },
+  { num: 2, nome: "Águia" },
+  { num: 3, nome: "Burro" },
+  { num: 4, nome: "Borboleta" },
+  { num: 5, nome: "Cachorro" },
+  { num: 6, nome: "Cabra" },
+  { num: 7, nome: "Carneiro" },
+  { num: 8, nome: "Camelo" },
+  { num: 9, nome: "Cobra" },
+  { num: 10, nome: "Coelho" },
+  { num: 11, nome: "Cavalo" },
+  { num: 12, nome: "Elefante" },
+  { num: 13, nome: "Galo" },
+  { num: 14, nome: "Gato" },
+  { num: 15, nome: "Jacaré" },
+  { num: 16, nome: "Leão" },
+  { num: 17, nome: "Macaco" },
+  { num: 18, nome: "Porco" },
+  { num: 19, nome: "Pavão" },
+  { num: 20, nome: "Peru" },
+  { num: 21, nome: "Touro" },
+  { num: 22, nome: "Tigre" },
+  { num: 23, nome: "Urso" },
+  { num: 24, nome: "Veado" },
+  { num: 25, nome: "Vaca" },
+];
+
+function dezenasDoGrupo(g: number): string[] {
+  const start = (g - 1) * 4;
+  return [start + 1, start + 2, start + 3, start + 4].map((d) =>
+    d === 100 ? "00" : String(d).padStart(2, "0"),
+  );
+}
+
+function TabelaGruposModal({ onClose }: { onClose: () => void }) {
+  // Lock scroll do body enquanto o modal estiver aberto.
+  useEffect(() => {
+    const orig = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = orig;
+    };
+  }, []);
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-end justify-center bg-black/70 sm:items-center sm:p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl bg-emerald-900 shadow-2xl sm:rounded-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-emerald-800 bg-emerald-900 px-4 py-3">
+          <h2 className="text-base font-bold text-white">Grupos e dezenas</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-1.5 text-emerald-100 hover:bg-emerald-800"
+            aria-label="Fechar"
+          >
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+        <div className="overflow-y-auto bg-emerald-900 p-3">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+            {BICHOS_TABELA.map((b) => (
+              <div
+                key={b.num}
+                className="relative flex flex-col items-center rounded-xl bg-white px-2 pb-2 pt-3 shadow-sm dark:bg-slate-100"
+              >
+                <span className="absolute left-1.5 top-1.5 rounded-md bg-amber-300 px-1.5 py-0.5 text-[10px] font-extrabold text-slate-900">
+                  {String(b.num).padStart(2, "0")}
+                </span>
+                <span className="absolute right-1.5 top-1.5 flex flex-col items-end text-right font-mono text-[10px] font-bold leading-tight text-emerald-700">
+                  {dezenasDoGrupo(b.num).map((d) => (
+                    <span key={d}>{d}</span>
+                  ))}
+                </span>
+                <div className="mt-3 flex h-12 w-full items-center justify-center sm:h-14">
+                  <span className="text-3xl">
+                    {bichoEmoji(b.num)}
+                  </span>
+                </div>
+                <p className="mt-1 truncate text-[11px] font-bold uppercase tracking-wide text-slate-800">
+                  {b.nome}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="border-t border-emerald-800 bg-emerald-900 p-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full rounded-xl bg-white py-2.5 text-sm font-semibold text-emerald-900 hover:bg-emerald-50"
+          >
+            Fechar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function bichoEmoji(num: number): string {
+  // Emojis para cada um dos 25 grupos do jogo do bicho.
+  const map: Record<number, string> = {
+    1: "🦃", 2: "🦅", 3: "🐴", 4: "🦋", 5: "🐕",
+    6: "🐐", 7: "🐑", 8: "🐪", 9: "🐍", 10: "🐇",
+    11: "🐎", 12: "🐘", 13: "🐓", 14: "🐈", 15: "🐊",
+    16: "🦁", 17: "🐒", 18: "🐖", 19: "🦚", 20: "🦃",
+    21: "🐂", 22: "🐅", 23: "🐻", 24: "🦌", 25: "🐄",
+  };
+  return map[num] ?? "?";
 }
