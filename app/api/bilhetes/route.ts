@@ -96,6 +96,63 @@ export async function POST(req: Request) {
     );
   }
 
+  // CRÍTICO: validar horário de encerramento da extração no servidor.
+  // Cliente pode bypassar a validação local; aqui a fonte da verdade é a
+  // tabela `extracoes` + relógio do servidor.
+  const extId = String(body.extracaoId ?? "");
+  if (extId) {
+    const { data: ext } = await sb
+      .from("extracoes")
+      .select("id, nome, encerra, ativa, dias")
+      .eq("id", extId)
+      .maybeSingle();
+    if (!ext) {
+      return NextResponse.json({ ok: false, erro: "Extração não encontrada" }, { status: 404 });
+    }
+    if (!ext.ativa) {
+      return NextResponse.json({ ok: false, erro: `Extração "${ext.nome}" não está ativa` }, { status: 403 });
+    }
+    // Hora atual em BRT (servidor pode estar em UTC).
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Sao_Paulo",
+      hour: "2-digit",
+      minute: "2-digit",
+      weekday: "short",
+      hour12: false,
+    });
+    const parts: Record<string, string> = {};
+    for (const p of fmt.formatToParts(new Date())) {
+      if (p.type !== "literal") parts[p.type] = p.value;
+    }
+    const horaAgora = parseInt(parts.hour ?? "0", 10);
+    const minAgora = parseInt(parts.minute ?? "0", 10);
+    const wkMap: Record<string, string> = { Sun: "Dom", Mon: "Seg", Tue: "Ter", Wed: "Qua", Thu: "Qui", Fri: "Sex", Sat: "Sab" };
+    const hojeKey = wkMap[parts.weekday ?? "Sun"] ?? "Dom";
+    const dias = (ext.dias ?? null) as string[] | null;
+    if (Array.isArray(dias) && dias.length > 0 && !dias.includes(hojeKey)) {
+      return NextResponse.json(
+        { ok: false, erro: `A extração "${ext.nome}" não roda hoje` },
+        { status: 403 },
+      );
+    }
+    const m = String(ext.encerra ?? "").match(/(\d{1,2}):(\d{2})/);
+    if (m) {
+      const hEnc = parseInt(m[1] ?? "0", 10);
+      const mEnc = parseInt(m[2] ?? "0", 10);
+      const minEncerra = hEnc * 60 + mEnc;
+      const minAgoraTotal = horaAgora * 60 + minAgora;
+      if (minAgoraTotal >= minEncerra) {
+        return NextResponse.json(
+          {
+            ok: false,
+            erro: `O horário de encerramento da extração "${ext.nome}" (${ext.encerra}) já passou. Não é mais possível confirmar este bilhete.`,
+          },
+          { status: 403 },
+        );
+      }
+    }
+  }
+
   const baseComissao = (mod: string): "grupo" | "dezena" | "centena" | "milhar" => {
     if (mod === "grupo" || mod.startsWith("duque_grupo") || mod.startsWith("terno_grupo") || mod.startsWith("passe")) return "grupo";
     if (mod === "dezena" || mod.startsWith("duque_dezena") || mod.startsWith("terno_dezena")) return "dezena";

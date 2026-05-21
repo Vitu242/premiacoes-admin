@@ -658,6 +658,22 @@ export default function ClienteVenderPage() {
     if (!extracao || !cambistaId || !cambista) return;
     if (carrinho.length === 0) { setErro("Adicione ao menos um jogo."); return; }
 
+    // CRÍTICO: revalidar o horário de encerramento agora, na hora da
+    // confirmação. Cliente pode ter começado o jogo antes do encerra e
+    // ultrapassado durante a digitação — só aceitar se ainda estiver dentro.
+    if (!extracaoAceitaApostas(extracao.encerra)) {
+      setErro(
+        `O horário de encerramento da extração "${extracao.nome}" (${extracao.encerra}) já passou. Não é mais possível confirmar este bilhete.`,
+      );
+      return;
+    }
+    if (!extracaoRodaHoje(extracao)) {
+      setErro(
+        `A extração "${extracao.nome}" não roda hoje. Selecione outra extração.`,
+      );
+      return;
+    }
+
     for (let i = 0; i < carrinho.length; i++) {
       const c = carrinho[i];
       const v = valoresFinais[i];

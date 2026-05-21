@@ -1113,6 +1113,28 @@ export async function addBilhete(b: Omit<Bilhete, "id" | "codigo">): Promise<Bil
   const duplicado = bilheteDuplicadoRecente(b);
   if (duplicado) return duplicado;
 
+  // CRÍTICO: validar o horário de encerramento da extração AQUI também,
+  // não só na UI. Cliente pode ter começado a digitar antes do encerra e
+  // demorado pra confirmar; também previne bypass via API direta.
+  const extracaoBilhete = getExtracoes().find((e) => e.id === b.extracaoId);
+  if (extracaoBilhete) {
+    if (!extracaoBilhete.ativa) {
+      throw new Error(
+        `A extração "${extracaoBilhete.nome}" não está ativa.`,
+      );
+    }
+    if (!extracaoRodaHoje(extracaoBilhete)) {
+      throw new Error(
+        `A extração "${extracaoBilhete.nome}" não roda hoje.`,
+      );
+    }
+    if (!extracaoAceitaApostas(extracaoBilhete.encerra)) {
+      throw new Error(
+        `O horário de encerramento da extração "${extracaoBilhete.nome}" (${extracaoBilhete.encerra}) já passou. Não é mais possível confirmar este bilhete.`,
+      );
+    }
+  }
+
   // Validação básica: cada item precisa de números, valor positivo e
   // cotação > 0 do cambista. Sem isso, o cliente paga e nunca pode ganhar.
   const cam = getCambistas().find((c) => c.id === b.cambistaId);
