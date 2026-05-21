@@ -40,56 +40,116 @@ export default function CompartilharBilheteBtn({
     };
   }, []);
 
-  /** Cria um clone isolado offscreen para garantir captura limpa. */
+  /** Cria um clone isolado offscreen para garantir captura limpa.
+   *
+   *  Estratégia que se mostrou MAIS confiável:
+   *    - Holder é deliberadamente MAIS LARGO que o bilhete (480 px) com 24 px
+   *      de padding em cada lado. Isso dá uma "moldura" branca ao redor.
+   *    - O bilhete fica em 380 px centralizado no holder.
+   *    - **Capturamos o HOLDER**, não o clone. Assim, qualquer leve overflow
+   *      (sombra, anti-aliasing, borda) cai dentro da margem branca do
+   *      holder em vez de ser cortado.
+   *    - Resultado: PNG fica com bilhete completo, sem cortes laterais e
+   *      com aparência mais profissional pra enviar no WhatsApp.
+   */
   const montarCloneOffscreen = (el: HTMLElement): { holder: HTMLDivElement; clone: HTMLElement } => {
     const holder = document.createElement("div");
+    const HOLDER_W = 480;
+    const HOLDER_PAD = 24;
     holder.style.cssText = [
       "position: fixed",
       "top: 0",
-      "left: -10000px",
+      "left: -100000px",
       "z-index: -1",
+      `width: ${HOLDER_W}px`,
       "background: #ffffff",
-      "padding: 16px",
+      `padding: ${HOLDER_PAD}px`,
       "color: #0f172a",
       "font-family: system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif",
       "color-scheme: light",
+      "box-sizing: border-box",
+      // Resets para impedir vazamento de classes globais (Tailwind dark, etc.).
+      "filter: none",
+      "transform: none",
+      "opacity: 1",
     ].join(";");
     holder.setAttribute("data-share-clone", "1");
 
     const clone = el.cloneNode(true) as HTMLElement;
-    // 390px evita cortes laterais em alguns WebViews/Chrome Android ao
-    // rasterizar layouts com bordas/arredondamentos. O componente segue 100%
-    // interno, então a imagem final fica completa e ainda legível.
-    // 380px casa com o maxWidth do BilheteDetalhado.tsx. Mantém o conteúdo
-    // dentro de 380 + padding do holder — sem cortes laterais em WhatsApp.
     clone.style.width = "380px";
     clone.style.maxWidth = "380px";
+    clone.style.minWidth = "380px";
     clone.style.boxSizing = "border-box";
     clone.style.margin = "0 auto";
-    clone.style.overflow = "visible";
+    // overflow do card volta a `hidden` (definido em BilheteDetalhado.tsx).
+    clone.classList.remove("dark");
     holder.appendChild(clone);
     document.body.appendChild(holder);
 
     return { holder, clone };
   };
 
+  /** Espera todas as <img> dentro do clone terminarem de carregar. */
+  const aguardarImagens = (root: HTMLElement, timeoutMs = 2500) => {
+    const imgs = Array.from(root.querySelectorAll("img"));
+    if (imgs.length === 0) return Promise.resolve();
+    return Promise.all(
+      imgs.map(
+        (img) =>
+          new Promise<void>((resolve) => {
+            if (img.complete && img.naturalWidth > 0) {
+              resolve();
+              return;
+            }
+            const finalize = () => {
+              img.removeEventListener("load", finalize);
+              img.removeEventListener("error", finalize);
+              resolve();
+            };
+            img.addEventListener("load", finalize);
+            img.addEventListener("error", finalize);
+            // Timeout de segurança — não vamos travar o share por uma imagem.
+            setTimeout(finalize, timeoutMs);
+          }),
+      ),
+    ).then(() => undefined);
+  };
+
+  /** Espera 2 RAFs + um pequeno delay para layout estabilizar. */
   const aguardarRender = () =>
     new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => setTimeout(() => resolve(), 80)),
+      ),
     );
 
   /** Gera Blob PNG do alvo, tentando várias estratégias. */
   const gerarBlobPng = async (el: HTMLElement): Promise<Blob> => {
     const { holder, clone } = montarCloneOffscreen(el);
     try {
+      // 1) Render inicial estabilizar.
       await aguardarRender();
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // 2) Espera imagens (logo, bicho, etc) carregarem antes de capturar.
+      await aguardarImagens(clone);
+      // 3) Mais um RAF depois das imagens.
+      await aguardarRender();
+
+      // CAPTURA O HOLDER (não o clone) para incluir a margem branca em volta
+      // do bilhete e qualquer leve overflow (sombra/borda anti-alias). Antes
+      // capturávamos só o clone e a borda direita ficava cortada
+      // ("Cotação 80,00" virava "Cotação 80,0", valor do TOTAL sumia, etc.).
+      const target = holder;
+      const rect = target.getBoundingClientRect();
+      const w = Math.max(1, Math.round(rect.width));
+      const h = Math.max(1, Math.round(rect.height));
 
       const opts = {
         scale: 2,
         backgroundColor: "#ffffff",
         font: false as const,
         drawImageInterval: 120,
+        width: w,
+        height: h,
         style: {
           fontFamily: "system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif",
           color: "#0f172a",
@@ -102,7 +162,7 @@ export default function CompartilharBilheteBtn({
 
       try {
         const ms = await import("modern-screenshot");
-        const blob = await ms.domToBlob(clone, opts);
+        const blob = await ms.domToBlob(target, opts);
         if (blob && blob.size > 900) return blob;
       } catch (e) {
         console.warn("[Compartilhar] modern-screenshot domToBlob falhou:", e);
@@ -110,7 +170,7 @@ export default function CompartilharBilheteBtn({
 
       try {
         const ms = await import("modern-screenshot");
-        const canvas = await ms.domToCanvas(clone, opts);
+        const canvas = await ms.domToCanvas(target, opts);
         const b = await new Promise<Blob | null>((resolve) =>
           canvas.toBlob((x) => resolve(x), "image/png", 1)
         );
@@ -121,7 +181,7 @@ export default function CompartilharBilheteBtn({
 
       try {
         const hti = await import("html-to-image");
-        const b = await hti.toBlob(clone, {
+        const b = await hti.toBlob(target, {
           pixelRatio: 2,
           cacheBust: true,
           skipFonts: true,
@@ -136,7 +196,7 @@ export default function CompartilharBilheteBtn({
 
       try {
         const hti = await import("html-to-image");
-        const dataUrl = await hti.toPng(clone, {
+        const dataUrl = await hti.toPng(target, {
           pixelRatio: 2,
           cacheBust: true,
           skipFonts: true,

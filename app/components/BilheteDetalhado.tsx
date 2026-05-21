@@ -141,8 +141,11 @@ const S: Record<string, CSSProperties> = {
   },
   sep: { marginLeft: 12, borderTop: "1px dashed #e5e7eb", height: 0 },
   banner: {
-    display: "grid",
-    gridTemplateColumns: "auto minmax(0, 1fr)",
+    // CRÍTICO: a separação escuro/claro é feita por GRADIENT no fundo do
+    // próprio banner — não por dois filhos com `background` diferentes. Assim
+    // a transição cai num pixel inteiro definido pelo CSS (`110px`), sem
+    // depender do layout dos filhos (que pode dar sub-pixel ao rasterizar).
+    display: "flex",
     alignItems: "stretch",
     borderRadius: 12,
     border: "2px solid #0f172a",
@@ -151,33 +154,39 @@ const S: Record<string, CSSProperties> = {
     minWidth: 0,
     overflow: "hidden",
     boxSizing: "border-box",
+    // 110 (largura do bannerLeft) + 2 (border-left) = 112 px de fronteira.
+    background:
+      "linear-gradient(to right, #0f172a 0, #0f172a 112px, #ffffff 112px, #ffffff 100%)",
   },
   bannerLeft: {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     gap: 4,
-    background: "#0f172a",
     color: "#ffffff",
     padding: "6px 10px",
     fontSize: 10.5,
     fontWeight: 800,
-    letterSpacing: "0.1em",
+    letterSpacing: "0.08em",
     whiteSpace: "nowrap",
     boxSizing: "border-box",
+    width: 110,
+    minWidth: 110,
+    flexShrink: 0,
+    // background: removido — agora é gradient no parent.
   },
   bannerRight: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    background: "#ffffff",
     color: "#0f172a",
     padding: "6px 10px",
-    width: "100%",
+    flex: 1,
     fontWeight: 800,
     fontSize: 12,
     gap: 6,
     minWidth: 0,
+    // background: removido — agora é gradient no parent.
   },
   bannerName: {
     minWidth: 0,
@@ -216,7 +225,18 @@ const S: Record<string, CSSProperties> = {
     color: "#ffffff",
     fontWeight: 800,
     fontSize: 10.5,
-    letterSpacing: "0.14em",
+    // letter-spacing reduzido para nomes longos (ex.: "MILHAR E CENTENA")
+    // não quebrarem em duas linhas no header escuro do item.
+    letterSpacing: "0.08em",
+    gap: 6,
+    minWidth: 0,
+  },
+  itemHeaderTitulo: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    flex: 1,
   },
   itemVariantePill: {
     background: "#f59e0b",
@@ -313,36 +333,49 @@ const S: Record<string, CSSProperties> = {
     width: "100%",
     minWidth: 0,
     boxSizing: "border-box",
-    flexWrap: "wrap",
+    flexWrap: "nowrap",
+  },
+  brindeLabel: {
+    fontWeight: 700,
+    letterSpacing: "0.06em",
+    whiteSpace: "nowrap",
+    flex: 1,
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   totalRow: {
+    // Mesma estratégia do banner: gradient define a fronteira escuro/claro.
     marginTop: 10,
-    display: "grid",
-    gridTemplateColumns: "auto minmax(0, 1fr)",
+    display: "flex",
     alignItems: "stretch",
     overflow: "hidden",
     borderRadius: 14,
     border: "2px solid #0f172a",
     width: "100%",
     boxSizing: "border-box",
+    // 96 (largura do totalLeft) + 2 (border-left) = 98 px de fronteira.
+    background:
+      "linear-gradient(to right, #0f172a 0, #0f172a 98px, #f8fafc 98px, #f8fafc 100%)",
   },
   totalLeft: {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    background: "#0f172a",
     color: "#ffffff",
     padding: "10px 16px",
     fontWeight: 800,
-    letterSpacing: "0.12em",
+    letterSpacing: "0.1em",
     fontSize: 12.5,
     whiteSpace: "nowrap",
     boxSizing: "border-box",
+    width: 96,
+    minWidth: 96,
+    flexShrink: 0,
   },
   totalRight: {
-    width: "100%",
+    flex: 1,
     minWidth: 0,
-    background: "#f8fafc",
     display: "flex",
     alignItems: "center",
     justifyContent: "flex-end",
@@ -435,7 +468,7 @@ const BilheteDetalhado = forwardRef<HTMLDivElement, Props>(function BilheteDetal
           return (
             <div key={i} style={S.item}>
               <div style={S.itemHeader}>
-                <span>{r.tipo}</span>
+                <span style={S.itemHeaderTitulo}>{r.tipo}</span>
                 {r.variante && <span style={S.itemVariantePill}>{r.variante}</span>}
               </div>
               <div style={S.palpiteGrid}>
@@ -470,8 +503,12 @@ const BilheteDetalhado = forwardRef<HTMLDivElement, Props>(function BilheteDetal
         <div style={S.brindeWrap}>
           {b.itens.filter((x) => x.milharBrinde).map((x, i) => (
             <div key={i} style={S.brindeLine}>
-              <span style={{ fontWeight: 700, letterSpacing: "0.06em" }}>MILHAR BRINDE {x.premio ?? "1/1"}</span>
-              <strong style={{ fontFamily: "monospace", fontSize: 13 }}>{x.milharBrinde}</strong>
+              {/* nbsp entre BRINDE e o prêmio: o navegador NÃO quebra em
+                  nbsp, mantém "MILHAR BRINDE 1/1" sempre na mesma linha. */}
+              <span style={S.brindeLabel}>
+                MILHAR&nbsp;BRINDE&nbsp;{x.premio ?? "1/1"}
+              </span>
+              <strong style={{ fontFamily: "monospace", fontSize: 13, flexShrink: 0 }}>{x.milharBrinde}</strong>
             </div>
           ))}
         </div>
