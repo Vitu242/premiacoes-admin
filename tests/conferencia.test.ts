@@ -6,6 +6,8 @@
 import { describe, it, expect } from "vitest";
 import {
   itemBateu,
+  contarHitsItem,
+  contarHitsMC,
   conferirBilhete,
   parsePremioRange,
   getPremioDivisor,
@@ -144,6 +146,110 @@ describe("conferirBilhete - valor com divisor de prêmio", () => {
     const r = conferirBilhete(bilhete, resultadoExemplo, cambista, getCotacao);
     expect(r.vencedor).toBe(true);
     expect(Math.round(r.valorGanho)).toBe(12000);
+  });
+
+  it("Palpite duplicado em GRUPO paga proporcionalmente (regressão: cachorro 2×)", () => {
+    // Cliente apostou no grupo 06 DUAS vezes (R$1 cada) num bilhete de 5 palpites.
+    // Antes o sistema pagava só 1× a cotação ao invés de 2×.
+    // Resultado: grupos 06,12,25,01,13 — 06 está sorteado, demais palpites
+    // (07,08,09) não estão.
+    const bilhete: Bilhete = {
+      id: "b-dup-grupo",
+      codigo: "0010",
+      cambistaId: "c1",
+      extracaoId: "1",
+      extracaoNome: "Federal",
+      itens: [
+        {
+          modalidade: "grupo",
+          numeros: "06 07 06 08 09",
+          valor: 5,
+          premio: "1/1",
+        },
+      ],
+      total: 5,
+      data: "13/05/26 12:00",
+      situacao: "pendente",
+    };
+    const r = conferirBilhete(bilhete, resultadoExemplo, cambista, getCotacao);
+    // 5 palpites, valorPorPalpite = R$1. 06 aparece 2 vezes (hits=2).
+    // Esperado: 2 × 1 × 20 / 1 = R$ 40.
+    expect(r.vencedor).toBe(true);
+    expect(r.valorGanho).toBe(40);
+    expect(contarHitsItem(bilhete.itens[0]!, resultadoExemplo)).toBe(2);
+  });
+
+  it("Palpite duplicado em DEZENA paga proporcionalmente", () => {
+    // Resultado: grupos 06,12,25,01,13 → primeira dezena de cada:
+    // grupo 06 → dezena 21..24 (linha 5 com 4 dezenas), 12 → 45..48,
+    // 25 → 97..00, 01 → 01..04, 13 → 49..52.
+    // Apostando em "21" duas vezes deve casar 2 hits.
+    const bilhete: Bilhete = {
+      id: "b-dup-dez",
+      codigo: "0011",
+      cambistaId: "c1",
+      extracaoId: "1",
+      extracaoNome: "Federal",
+      itens: [
+        {
+          modalidade: "dezena",
+          numeros: "21 33 21 77 88",
+          valor: 5,
+          premio: "1/1",
+        },
+      ],
+      total: 5,
+      data: "13/05/26 12:00",
+      situacao: "pendente",
+    };
+    const r = conferirBilhete(bilhete, resultadoExemplo, cambista, getCotacao);
+    // 5 palpites, valorPorPalpite = R$1. 21 aparece 2× e está no grupo 06 → hits=2.
+    // Esperado: 2 × 1 × 80 / 1 = R$ 160.
+    expect(r.vencedor).toBe(true);
+    expect(r.valorGanho).toBe(160);
+    expect(contarHitsItem(bilhete.itens[0]!, resultadoExemplo)).toBe(2);
+  });
+
+  it("Palpite duplicado em MC: milhar e centena contam separado", () => {
+    // resultadoMilhar0001 → milhar=0001, centena=001.
+    // Aposta "0001" duas vezes: 2 hits de milhar + 2 hits de centena.
+    const bilhete: Bilhete = {
+      id: "b-dup-mc",
+      codigo: "0012",
+      cambistaId: "c1",
+      extracaoId: "1",
+      extracaoNome: "LOOK GOIAS 23:20",
+      itens: [
+        {
+          modalidade: "milhar_e_centena",
+          numeros: "0001 5555 0001",
+          valor: 6,
+          premio: "1/1",
+        },
+      ],
+      total: 6,
+      data: "13/05/26 12:00",
+      situacao: "pendente",
+    };
+    const r = conferirBilhete(bilhete, resultadoMilhar0001, cambista, getCotacao);
+    // 3 palpites, valorPorPalpite = 2. Metade pra milhar/centena = 1.
+    // 2 hits de milhar: 2 × 1 × 6000 = 12000
+    // 2 hits de centena: 2 × 1 × 800 = 1600
+    // Total = 13600.
+    expect(r.vencedor).toBe(true);
+    expect(r.valorGanho).toBe(13600);
+    const hits = contarHitsMC(bilhete.itens[0]!, resultadoMilhar0001);
+    expect(hits.milhar).toBe(2);
+    expect(hits.centena).toBe(2);
+  });
+
+  it("itemBateu (boolean) ainda funciona — retrocompatível", () => {
+    expect(
+      itemBateu(
+        { modalidade: "grupo", numeros: "06 06", valor: 2, premio: "1/1" },
+        resultadoExemplo,
+      ),
+    ).toBe(true);
   });
 
   it("Milhar brinde paga prêmio fixo apenas no 1/1", () => {

@@ -173,117 +173,170 @@ function splitNumeros(numeros: string, modalidade: string): string[] {
   return [s];
 }
 
-/** Verifica se o item bateu em algum prêmio do range. Usa número oficial do resultado: milhar 4 díg, centena 3, dezena 2, grupo. */
+/** Verifica se o item bateu em algum prêmio do range. Usa número oficial do resultado: milhar 4 díg, centena 3, dezena 2, grupo.
+ *
+ *  Retrocompatível com chamadores antigos. Internamente delega para
+ *  `contarHitsItem` (que conta duplicatas) e devolve true quando há ao menos
+ *  1 hit. Para CALCULAR PRÊMIO use `contarHitsItem` direto. */
 export function itemBateu(item: ItemBilhete, resultado: Resultado, maxPremio?: number): boolean {
+  return contarHitsItem(item, resultado, maxPremio) > 0;
+}
+
+/**
+ * Conta QUANTOS palpites do item bateram em algum prêmio do range,
+ * **considerando duplicatas**. É a função usada por `conferirBilhete` para
+ * calcular o valor ganho corretamente.
+ *
+ * Cenário concreto que motivou esta função:
+ *   - Cliente apostou no grupo "05" duas vezes (R$1 cada) num bilhete com
+ *     9 palpites totalizando R$9.
+ *   - Antes, o sistema só retornava `bateu = true` no primeiro hit e pagava
+ *     1× a cotação, mesmo o cliente tendo pago 2× pela aposta no 05.
+ *   - Agora retorna `hits = 2` e o conferidor paga 2× a cotação.
+ *
+ * Combinações (duque/terno de grupo/dezena) NÃO usam essa contagem — para elas
+ * a lista inteira é UM ÚNICO palpite (precisa todos os números casarem).
+ * Repetir uma combinação no mesmo item não faz sentido.
+ *
+ * Múltiplos prêmios do range (1/5, 1/10): cada palpite é contado UMA VEZ
+ * mesmo que case em mais de um prêmio — a divisão pelo divisor já compensa
+ * a probabilidade ampliada da faixa.
+ */
+export function contarHitsItem(
+  item: ItemBilhete,
+  resultado: Resultado,
+  maxPremio?: number,
+): number {
   const range = parsePremioRange(item.premio ?? "1/1", maxPremio);
   const modalidade = item.modalidade;
   const numerosList = splitNumeros(item.numeros, modalidade);
 
-  for (const p of range) {
-    const gruposStr = getGruposDoPremio(resultado, p);
-    if (!gruposStr.trim()) continue;
-    const w = getWinningData(gruposStr);
-    if (!w) continue;
-
-    if (modalidade === "grupo") {
-      for (const num of numerosList) {
-        const g = num.length <= 2 ? num.padStart(2, "0") : num.slice(0, 2);
-        if (w.grupos.has(g)) return true;
-      }
-    }
-
-    if (modalidade === "dezena") {
-      for (const num of numerosList) {
-        const dez = normalizarDezena(num);
-        if (w.dezenas.has(dez)) return true;
-      }
-    }
-
-    if (modalidade === "centena") {
-      for (const num of numerosList) {
-        const c = normalizarCentena(num);
-        if (w.centena3 && c === w.centena3) return true;
-      }
-    }
-
-    if (modalidade === "milhar") {
-      for (const num of numerosList) {
-        const m = normalizarMilhar(num);
-        if (w.milhar4 && m === w.milhar4) return true;
-      }
-    }
-
-    if (modalidade === "milhar_invertida") {
-      if (!w.milhar4) continue;
-      const winSort = digitosOrdenados(w.milhar4);
-      for (const num of numerosList) {
-        if (digitosOrdenados(normalizarMilhar(num)) === winSort) return true;
-      }
-    }
-
-    if (modalidade === "centena_invertida") {
-      if (!w.centena3) continue;
-      const winSort = digitosOrdenados(w.centena3);
-      for (const num of numerosList) {
-        if (digitosOrdenados(normalizarCentena(num)) === winSort) return true;
-      }
-    }
-
-    if (modalidade === "mc_invertida") {
-      const winMilhar = w.milhar4 ? digitosOrdenados(w.milhar4) : "";
-      const winCentena = w.centena3 ? digitosOrdenados(w.centena3) : "";
-      for (const num of numerosList) {
-        const m = normalizarMilhar(num);
-        const c = normalizarCentena(num);
-        if ((winMilhar && digitosOrdenados(m) === winMilhar) || (winCentena && digitosOrdenados(c) === winCentena)) return true;
-      }
-    }
-
-    if (modalidade === "milhar_e_centena") {
-      for (const num of numerosList) {
-        const m = normalizarMilhar(num);
-        const c = normalizarCentena(num);
-        if ((w.milhar4 && m === w.milhar4) || (w.centena3 && c === w.centena3)) return true;
-      }
-    }
-
-    if (modalidade.startsWith("duque_grupo") || modalidade.startsWith("terno_grupo")) {
-      const allIn = numerosList.length >= 1 && numerosList.every((num) => {
-        const g = num.length <= 2 ? num.padStart(2, "0") : num.slice(0, 2);
-        return w.grupos.has(g);
-      });
-      if (allIn && numerosList.length === (modalidade.startsWith("duque") ? 2 : 3)) return true;
-    }
-
-    if (modalidade.startsWith("duque_dezena") || modalidade.startsWith("terno_dezena")) {
-      const allIn = numerosList.length >= 1 && numerosList.every((num) => {
+  // Combinações: lista inteira = 1 palpite. Mantém o comportamento antigo
+  // (boolean → 1 ou 0) usando o teste de "todos os números bateram".
+  if (
+    modalidade.startsWith("duque_grupo") ||
+    modalidade.startsWith("terno_grupo") ||
+    modalidade.startsWith("duque_dezena") ||
+    modalidade.startsWith("terno_dezena")
+  ) {
+    for (const p of range) {
+      const gruposStr = getGruposDoPremio(resultado, p);
+      if (!gruposStr.trim()) continue;
+      const w = getWinningData(gruposStr);
+      if (!w) continue;
+      const isGrupo = modalidade.startsWith("duque_grupo") || modalidade.startsWith("terno_grupo");
+      const tamanhoEsperado = modalidade.startsWith("duque") ? 2 : 3;
+      if (numerosList.length !== tamanhoEsperado) continue;
+      const allIn = numerosList.every((num) => {
+        if (isGrupo) {
+          const g = num.length <= 2 ? num.padStart(2, "0") : num.slice(0, 2);
+          return w.grupos.has(g);
+        }
         const dez = normalizarDezena(num);
         return w.dezenas.has(dez);
       });
-      if (allIn && numerosList.length === (modalidade.startsWith("duque") ? 2 : 3)) return true;
+      if (allIn) return 1;
     }
+    return 0;
   }
-  return false;
+
+  // Para modalidades de número simples (grupo/dezena/centena/milhar/invertidas/MC),
+  // cada palpite é independente. Conta quantos casaram em pelo menos 1 prêmio.
+  let hits = 0;
+  for (const num of numerosList) {
+    let matched = false;
+    for (const p of range) {
+      const gruposStr = getGruposDoPremio(resultado, p);
+      if (!gruposStr.trim()) continue;
+      const w = getWinningData(gruposStr);
+      if (!w) continue;
+
+      if (modalidade === "grupo") {
+        const g = num.length <= 2 ? num.padStart(2, "0") : num.slice(0, 2);
+        if (w.grupos.has(g)) { matched = true; break; }
+      } else if (modalidade === "dezena") {
+        const dez = normalizarDezena(num);
+        if (w.dezenas.has(dez)) { matched = true; break; }
+      } else if (modalidade === "centena") {
+        const c = normalizarCentena(num);
+        if (w.centena3 && c === w.centena3) { matched = true; break; }
+      } else if (modalidade === "milhar") {
+        const m = normalizarMilhar(num);
+        if (w.milhar4 && m === w.milhar4) { matched = true; break; }
+      } else if (modalidade === "milhar_invertida") {
+        if (!w.milhar4) continue;
+        if (digitosOrdenados(normalizarMilhar(num)) === digitosOrdenados(w.milhar4)) {
+          matched = true;
+          break;
+        }
+      } else if (modalidade === "centena_invertida") {
+        if (!w.centena3) continue;
+        if (digitosOrdenados(normalizarCentena(num)) === digitosOrdenados(w.centena3)) {
+          matched = true;
+          break;
+        }
+      } else if (modalidade === "mc_invertida") {
+        const winMilhar = w.milhar4 ? digitosOrdenados(w.milhar4) : "";
+        const winCentena = w.centena3 ? digitosOrdenados(w.centena3) : "";
+        const m = normalizarMilhar(num);
+        const c = normalizarCentena(num);
+        if (
+          (winMilhar && digitosOrdenados(m) === winMilhar) ||
+          (winCentena && digitosOrdenados(c) === winCentena)
+        ) {
+          matched = true;
+          break;
+        }
+      } else if (modalidade === "milhar_e_centena") {
+        const m = normalizarMilhar(num);
+        const c = normalizarCentena(num);
+        if ((w.milhar4 && m === w.milhar4) || (w.centena3 && c === w.centena3)) {
+          matched = true;
+          break;
+        }
+      }
+    }
+    if (matched) hits++;
+  }
+  return hits;
 }
 
-/** Para MC: retorna se bateu na milhar e/ou na centena (para aplicar 50/50). */
+/** Para MC: retorna se bateu na milhar e/ou na centena (para aplicar 50/50).
+ *  Mantida por retrocompatibilidade — usa `contarHitsMC` por baixo. */
 export function itemBateuMC(
   item: ItemBilhete,
   resultado: Resultado,
   maxPremio?: number,
 ): { milhar: boolean; centena: boolean } {
+  const { milhar, centena } = contarHitsMC(item, resultado, maxPremio);
+  return { milhar: milhar > 0, centena: centena > 0 };
+}
+
+/** Para MC: conta QUANTOS palpites bateram em milhar e quantos em centena
+ *  (incluindo duplicatas). Cada palpite conta UMA vez por categoria, mesmo
+ *  que case em vários prêmios da faixa 1/5 ou 1/10. */
+export function contarHitsMC(
+  item: ItemBilhete,
+  resultado: Resultado,
+  maxPremio?: number,
+): { milhar: number; centena: number } {
   const range = parsePremioRange(item.premio ?? "1/1", maxPremio);
   const numerosList = splitNumeros(item.numeros, item.modalidade);
-  let milhar = false;
-  let centena = false;
-  for (const p of range) {
-    const gruposStr = getGruposDoPremio(resultado, p);
-    const w = getWinningData(gruposStr ?? "");
-    if (!w) continue;
-    for (const num of numerosList) {
-      if (w.milhar4 && normalizarMilhar(num) === w.milhar4) milhar = true;
-      if (w.centena3 && normalizarCentena(num) === w.centena3) centena = true;
+  let milhar = 0;
+  let centena = 0;
+  for (const num of numerosList) {
+    let hitM = false;
+    let hitC = false;
+    for (const p of range) {
+      const gruposStr = getGruposDoPremio(resultado, p);
+      const w = getWinningData(gruposStr ?? "");
+      if (!w) continue;
+      if (!hitM && w.milhar4 && normalizarMilhar(num) === w.milhar4) hitM = true;
+      if (!hitC && w.centena3 && normalizarCentena(num) === w.centena3) hitC = true;
+      if (hitM && hitC) break;
     }
+    if (hitM) milhar++;
+    if (hitC) centena++;
   }
   return { milhar, centena };
 }
@@ -340,17 +393,26 @@ export function conferirBilhete(
     let brindeValorGanho = 0;
 
     if (item.modalidade === "milhar_e_centena") {
-      const { milhar: hitMilhar, centena: hitCentena } = itemBateuMC(item, resultado, maxPremio);
+      // MC: cada palpite vale 50% pra milhar + 50% pra centena. Conta-se
+      // QUANTOS palpites casaram em cada (incluindo duplicatas) — antes só
+      // verificava boolean e pagava 1× mesmo se o cliente apostou no mesmo
+      // número várias vezes.
+      const { milhar: hitsM, centena: hitsC } = contarHitsMC(item, resultado, maxPremio);
       const cotacaoM = getCotacao(cambista, "milhar");
       const cotacaoC = getCotacao(cambista, "centena");
       const metade = valorPorPalpite / 2;
-      if (hitMilhar) valorGanhoItem += (metade * cotacaoM) / divisor;
-      if (hitCentena) valorGanhoItem += (metade * cotacaoC) / divisor;
-      bateu = hitMilhar || hitCentena;
+      if (hitsM > 0) valorGanhoItem += (hitsM * metade * cotacaoM) / divisor;
+      if (hitsC > 0) valorGanhoItem += (hitsC * metade * cotacaoC) / divisor;
+      bateu = hitsM > 0 || hitsC > 0;
     } else {
-      bateu = itemBateu(item, resultado, maxPremio);
+      // CRÍTICO: usar contarHitsItem em vez de itemBateu. Bilhete com palpite
+      // duplicado (ex.: grupo 05 duas vezes em 9 palpites) precisa pagar 2×
+      // a cotação se 05 for sorteado — antes pagava só 1× porque o
+      // itemBateu retornava boolean.
+      const hits = contarHitsItem(item, resultado, maxPremio);
+      bateu = hits > 0;
       const cotacao = getCotacao(cambista, item.modalidade);
-      valorGanhoItem = bateu ? (valorPorPalpite * cotacao) / divisor : 0;
+      valorGanhoItem = hits > 0 ? (hits * valorPorPalpite * cotacao) / divisor : 0;
     }
 
     // Milhar brinde é uma regra separada: só vale no 1º prêmio (1/1) e paga
