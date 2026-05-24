@@ -208,7 +208,7 @@ export default function VendasAdminPage() {
         Venda
       </div>
 
-      <div className="mb-3 grid gap-2 border border-slate-300 bg-white p-2 print:hidden dark:border-slate-700 dark:bg-slate-900 md:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto]">
+      <div className="mb-3 grid gap-2 rounded-md border border-slate-300 bg-white p-2 print:hidden dark:border-slate-700 dark:bg-slate-900 sm:grid-cols-2 md:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto]">
         <select
           value={tipoFiltro === "gerente" ? gerenteId : "todos"}
           onChange={(e) => {
@@ -265,13 +265,183 @@ export default function VendasAdminPage() {
         <button
           type="button"
           onClick={() => setRefreshKey((k) => k + 1)}
-          className="h-9 bg-blue-600 px-8 text-sm font-bold text-white hover:bg-blue-700"
+          className="col-span-full h-9 rounded bg-blue-600 px-8 text-sm font-bold text-white hover:bg-blue-700 md:col-auto"
         >
           Buscar
         </button>
       </div>
 
-      <div className="overflow-x-auto">
+      {/* MOBILE: cards (md:hidden). Cada grupo de gerente vira um bloco
+          com os cambistas em cards, totalizadores em destaque embaixo. */}
+      <div className="md:hidden">
+        {relatorio.length === 0 ? (
+          <div className="rounded-lg border-2 border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            Nenhuma venda encontrada para o filtro selecionado.
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {relatorio.map((grupo) => (
+              <div
+                key={grupo.gerenteId}
+                className="overflow-hidden rounded-lg border border-slate-300 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900"
+              >
+                <div className="bg-neutral-700 px-3 py-2 text-sm font-bold text-white">
+                  {grupo.gerenteNome}
+                </div>
+                <div className="divide-y divide-slate-200 dark:divide-slate-700">
+                  {grupo.linhas.map((linha) => (
+                    <div key={linha.cambista.id} className="px-3 py-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-bold text-slate-900 dark:text-slate-100">
+                            {linha.cambista.login}
+                          </p>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {linha.qtd} bilhete{linha.qtd === 1 ? "" : "s"}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] uppercase text-slate-500 dark:text-slate-400">
+                            Saldo Banca
+                          </p>
+                          <p
+                            className={`text-base font-bold tabular-nums ${classeValor(linha.saldoBanca)}`}
+                          >
+                            {formatarMoeda(linha.saldoBanca)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+                        <div>
+                          <span className="text-slate-500 dark:text-slate-400">Entrada:</span>{" "}
+                          <span className="font-semibold tabular-nums text-slate-800 dark:text-slate-100">
+                            {formatarMoeda(linha.entrada)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 dark:text-slate-400">Saída:</span>{" "}
+                          <span className="font-semibold tabular-nums text-slate-800 dark:text-slate-100">
+                            {formatarMoeda(linha.saida)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 dark:text-slate-400">Comissão:</span>{" "}
+                          <span className="font-semibold tabular-nums text-slate-800 dark:text-slate-100">
+                            {formatarMoeda(linha.comissao)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 dark:text-slate-400">Lançam.:</span>{" "}
+                          <span
+                            className={`font-semibold tabular-nums ${classeValor(linha.lancamentos)}`}
+                          >
+                            {formatarMoeda(linha.lancamentos)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {/* Totais do gerente. */}
+                <div className="border-t-2 border-slate-300 bg-slate-100 px-3 py-2 dark:border-slate-600 dark:bg-slate-800">
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+                    <div>
+                      <span className="text-slate-500 dark:text-slate-400">Total Entrada:</span>{" "}
+                      <span className="font-bold tabular-nums text-slate-800 dark:text-slate-100">
+                        {formatarMoeda(grupo.total.entrada)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 dark:text-slate-400">Total Saída:</span>{" "}
+                      <span className="font-bold tabular-nums text-slate-800 dark:text-slate-100">
+                        {formatarMoeda(grupo.total.saida)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 dark:text-slate-400">Total Comissão:</span>{" "}
+                      <span className="font-bold tabular-nums text-slate-800 dark:text-slate-100">
+                        {formatarMoeda(grupo.total.comissao)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 dark:text-slate-400">Bilhetes:</span>{" "}
+                      <span className="font-bold tabular-nums text-slate-800 dark:text-slate-100">
+                        {grupo.total.qtd}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 border-t border-slate-300 pt-2 dark:border-slate-600">
+                    <div className="text-center">
+                      <p className="text-[9px] uppercase text-slate-500 dark:text-slate-400">
+                        Gerente
+                      </p>
+                      <p className="text-sm font-bold tabular-nums text-amber-700 dark:text-amber-300">
+                        {formatarMoeda(grupo.gerenteComissao)}
+                      </p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-[9px] uppercase text-slate-500 dark:text-slate-400">
+                        Banca
+                      </p>
+                      <p
+                        className={`text-sm font-bold tabular-nums ${classeValor(grupo.total.saldoBanca)}`}
+                      >
+                        {formatarMoeda(grupo.total.saldoBanca)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {/* Total Geral em destaque verde. */}
+            <div className="overflow-hidden rounded-lg border-2 border-green-700 bg-white shadow dark:bg-slate-900">
+              <div className="bg-green-700 px-3 py-2 text-center text-sm font-bold uppercase text-white">
+                Total Geral da Banca
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 px-3 py-3 text-xs">
+                <div>
+                  <span className="text-slate-500 dark:text-slate-400">Bilhetes:</span>{" "}
+                  <span className="font-bold tabular-nums text-slate-800 dark:text-slate-100">
+                    {totalGeral.qtd}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-500 dark:text-slate-400">Entrada:</span>{" "}
+                  <span className="font-bold tabular-nums text-slate-800 dark:text-slate-100">
+                    {formatarMoeda(totalGeral.entrada)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-500 dark:text-slate-400">Saída:</span>{" "}
+                  <span className="font-bold tabular-nums text-slate-800 dark:text-slate-100">
+                    {formatarMoeda(totalGeral.saida)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-500 dark:text-slate-400">Comissões:</span>{" "}
+                  <span className="font-bold tabular-nums text-slate-800 dark:text-slate-100">
+                    {formatarMoeda(totalGeral.comissao)}
+                  </span>
+                </div>
+              </div>
+              <div className="border-t border-green-700 bg-green-50 px-3 py-3 text-center dark:bg-green-950/30">
+                <p className="text-[10px] uppercase text-slate-600 dark:text-slate-300">
+                  Saldo Banca (lucro/prejuízo)
+                </p>
+                <p
+                  className={`text-2xl font-bold tabular-nums ${classeValor(totalGeral.saldoBanca)}`}
+                >
+                  {formatarMoeda(totalGeral.saldoBanca)}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* DESKTOP: tabela tradicional. */}
+      <div className="hidden overflow-x-auto md:block">
         {relatorio.length === 0 ? (
           <div className="border border-slate-300 bg-white p-8 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
             Nenhuma venda encontrada para o filtro selecionado.
