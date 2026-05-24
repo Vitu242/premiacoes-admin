@@ -191,7 +191,88 @@ export default function PrestarContasPage() {
         </button>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow">
+      {/* MOBILE: cards (md:hidden). DESKTOP: tabela tradicional. Tabela
+          completa em telas pequenas ficava cortada (entrada/saída/comissão
+          não cabiam). Em cards o admin vê todas as informações sem rolar
+          horizontalmente. */}
+      <div className="space-y-3 md:hidden">
+        {filtrar.length === 0 && (
+          <div className="rounded-lg border-2 border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-500">
+            Nenhum cambista para este filtro.
+          </div>
+        )}
+        {filtrar.map((c) => {
+          const resumo = calcularResumoAtualCambista(c.id);
+          const total = calcularTotalCaixa(resumo);
+          return (
+            <div
+              key={c.id}
+              className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm"
+            >
+              <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-bold text-gray-900">{c.login}</p>
+                  <p className="text-[11px] text-gray-500">
+                    Última prestação:{" "}
+                    {c.ultimaPrestacao ? formatarDataHoraBr(c.ultimaPrestacao) : "nunca"}
+                  </p>
+                </div>
+                <div className="ml-2 text-right">
+                  <p className="text-[10px] uppercase text-gray-500">Total</p>
+                  <p
+                    className={`text-base font-bold tabular-nums ${
+                      total > 0
+                        ? "text-green-600"
+                        : total < 0
+                          ? "text-red-600"
+                          : "text-gray-900"
+                    }`}
+                  >
+                    {formatarMoeda(total)}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 px-3 py-3 text-xs">
+                <div>
+                  <span className="text-gray-500">Entrada:</span>{" "}
+                  <span className="font-medium tabular-nums text-gray-800">
+                    {formatarMoeda(resumo.entrada)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Saídas:</span>{" "}
+                  <span className="font-medium tabular-nums text-gray-800">
+                    {formatarMoeda(resumo.saidas)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Comissão:</span>{" "}
+                  <span className="font-medium tabular-nums text-gray-800">
+                    {formatarMoeda(resumo.comissao)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Lançamentos:</span>{" "}
+                  <span className="font-medium tabular-nums text-gray-800">
+                    {formatarMoeda(resumo.lancamentos)}
+                  </span>
+                </div>
+              </div>
+              <div className="border-t border-gray-100 px-3 py-2">
+                <button
+                  onClick={() => setDetalhe(c)}
+                  disabled={acaoEmAndamento}
+                  className="w-full rounded bg-orange-500 px-3 py-2 text-sm font-semibold text-white hover:bg-orange-600 disabled:opacity-50"
+                >
+                  Prestar contas
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white shadow md:block">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
@@ -230,10 +311,6 @@ export default function PrestarContasPage() {
               </tr>
             ) : null}
             {filtrar.map((c) => {
-              // Sempre derivar dos bilhetes/lançamentos. Os campos
-              // c.entrada/saidas/comissao/lancamentos podem perder updates
-              // quando o cambista usa o app em 2 dispositivos (last write
-              // wins no upsert do Supabase). O cálculo derivado é estável.
               const resumo = calcularResumoAtualCambista(c.id);
               const total = calcularTotalCaixa(resumo);
               return (

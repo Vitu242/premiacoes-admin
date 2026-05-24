@@ -260,7 +260,119 @@ export default function BilhetesAdminPage() {
       )}
       <p className="mb-4 text-sm text-black">{filtrar.length} bilhete(s) encontrado(s)</p>
 
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow">
+      {/* MOBILE: cards (md:hidden). */}
+      <div className="space-y-2 md:hidden">
+        {filtrar.length === 0 && (
+          <div className="rounded-lg border-2 border-dashed border-gray-300 bg-white p-6 text-center text-sm text-gray-500">
+            Nenhum bilhete encontrado.
+          </div>
+        )}
+        {[...filtrar]
+          .sort((a, b) => {
+            if (ordenacao === "valor_desc") return b.total - a.total;
+            if (ordenacao === "valor_asc") return a.total - b.total;
+            if (ordenacao === "premio_desc" || ordenacao === "premio_asc") {
+              const premioA = getValorPremioReal(a);
+              const premioB = getValorPremioReal(b);
+              return ordenacao === "premio_desc" ? premioB - premioA : premioA - premioB;
+            }
+            if (ordenacao === "data_desc") return compararBilheteRecentePrimeiro(a, b);
+            if (ordenacao === "data_asc") {
+              const da = parseDataPtBrOuIso(a.data)?.getTime() ?? 0;
+              const db = parseDataPtBrOuIso(b.data)?.getTime() ?? 0;
+              if (da !== db) return da - db;
+              return Number(a.id) - Number(b.id);
+            }
+            return compararBilheteRecentePrimeiro(a, b);
+          })
+          .map((b) => {
+            const premioReal = getValorPremioReal(b);
+            const jogo = b.itens
+              .map(
+                (i) =>
+                  `${MODALIDADES[i.modalidade] || i.modalidade} ${i.numeros}${i.milharBrinde ? ` + Brinde ${i.milharBrinde}` : ""}`,
+              )
+              .join(" | ");
+            return (
+              <div
+                key={b.id}
+                className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-mono text-sm font-bold text-gray-900">
+                      {b.codigo}
+                    </p>
+                    <p className="mt-0.5 truncate text-[11px] text-gray-600">
+                      {getCambistaNome(b.cambistaId)} · {b.extracaoNome}
+                    </p>
+                    <p className="text-[10px] text-gray-500">
+                      {formatarDataHoraBr(b.data)}
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      b.situacao === "pendente"
+                        ? "bg-yellow-100 text-yellow-700"
+                        : b.situacao === "pago"
+                          ? "bg-green-100 text-green-700"
+                          : b.situacao === "cancelado"
+                            ? "bg-red-100 text-red-700"
+                            : "bg-gray-100 text-gray-700"
+                    }`}
+                  >
+                    {b.situacao}
+                  </span>
+                </div>
+                <div className="px-3 py-2 text-xs">
+                  <p className="line-clamp-2 break-words text-gray-700">{jogo}</p>
+                  <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+                    <div>
+                      <span className="text-gray-500">Aposta:</span>{" "}
+                      <span className="font-semibold tabular-nums text-gray-800">
+                        {formatarMoeda(b.total)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Prêmio:</span>{" "}
+                      <span
+                        className={`font-semibold tabular-nums ${premioReal > 0 ? "text-green-700" : "text-gray-800"}`}
+                      >
+                        {formatarMoeda(premioReal)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 divide-x divide-gray-100 border-t border-gray-100 text-xs font-medium">
+                  <button
+                    type="button"
+                    onClick={() => setDetalheBilhete(b)}
+                    className="bg-blue-50 py-2 text-blue-700 active:bg-blue-100"
+                  >
+                    Ver bilhete
+                  </button>
+                  {b.situacao !== "cancelado" && podeCancelarAdmin ? (
+                    <button
+                      type="button"
+                      onClick={() => handleCancelarAdmin(b)}
+                      disabled={cancelandoId === b.id}
+                      className="bg-red-50 py-2 text-red-700 active:bg-red-100 disabled:opacity-60"
+                    >
+                      {cancelandoId === b.id ? "Cancelando…" : "Cancelar"}
+                    </button>
+                  ) : (
+                    <span className="bg-gray-50 py-2 text-center text-gray-400">
+                      —
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+      </div>
+
+      {/* DESKTOP: tabela. */}
+      <div className="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white shadow md:block">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>

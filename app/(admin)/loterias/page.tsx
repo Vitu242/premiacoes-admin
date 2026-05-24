@@ -261,7 +261,82 @@ export default function LoteriasUnificadaPage() {
               Restaurar lista padrão (55 loterias)
             </button>
           </div>
-          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow">
+          {/* MOBILE: lista compacta de cards (md:hidden). Mostra todas as
+              informações sem corte e ações em linha única. */}
+          <div className="space-y-2 md:hidden">
+            {filtrarExtracoes.length === 0 && (
+              <div className="rounded-lg border-2 border-dashed border-gray-300 bg-white p-6 text-center text-sm text-gray-500">
+                Nenhuma extração para este filtro.
+              </div>
+            )}
+            {filtrarExtracoes.map((e) => (
+              <div
+                key={e.id}
+                className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-2 px-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-bold text-gray-900">{e.nome}</p>
+                    <p className="mt-0.5 text-[11px] text-gray-500">
+                      {e.tipo ?? "—"} · Encerra {e.encerra} · Até 1/{getPremioMaxExtracao(e.id)}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-gray-500">
+                      <span className="font-medium">Dias:</span>{" "}
+                      {e.dias?.length ? e.dias.join(", ") : "Todos"}
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      e.ativa
+                        ? "bg-green-100 text-green-700"
+                        : "bg-gray-200 text-gray-600"
+                    }`}
+                  >
+                    {e.ativa ? "Ativa" : "Inativa"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 divide-x divide-gray-100 border-t border-gray-100 text-xs font-medium">
+                  <button
+                    onClick={() => {
+                      setEditando(e);
+                      setNovo(false);
+                      setForm({
+                        nome: e.nome,
+                        encerra: e.encerra,
+                        ativa: e.ativa,
+                        tipo: e.tipo ?? "Tradicional",
+                        dias: e.dias?.length ? e.dias : DIAS_SEMANA,
+                        premioMax: getPremioMaxExtracao(e.id),
+                      });
+                    }}
+                    className="bg-orange-50 py-2 text-orange-700 active:bg-orange-100"
+                  >
+                    Editar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => alternarAtiva(e)}
+                    className={`py-2 active:opacity-80 ${
+                      e.ativa
+                        ? "bg-gray-50 text-gray-700"
+                        : "bg-green-50 text-green-700"
+                    }`}
+                  >
+                    {e.ativa ? "Desativar" : "Ativar"}
+                  </button>
+                  <button
+                    onClick={() => apagarExtracao(e)}
+                    className="bg-red-50 py-2 text-red-700 active:bg-red-100"
+                  >
+                    Apagar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* DESKTOP: tabela tradicional. */}
+          <div className="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white shadow md:block">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>

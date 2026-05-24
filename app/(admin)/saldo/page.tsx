@@ -126,7 +126,81 @@ export default function SaldoPage() {
         </select>
       </div>
 
-      <div className="mb-6 overflow-x-auto rounded-lg border border-gray-200 bg-white shadow">
+      {/* MOBILE: cards com info do saldo + ajustes rápidos. */}
+      <div className="mb-6 space-y-2 md:hidden">
+        {filtrar.length === 0 && (
+          <div className="rounded-lg border-2 border-dashed border-gray-300 bg-white p-6 text-center text-sm text-gray-500">
+            Nenhum cambista para este filtro.
+          </div>
+        )}
+        {filtrar.map((c) => {
+          const disp = Math.max(0, c.saldo - c.entrada);
+          return (
+            <div
+              key={c.id}
+              className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm"
+            >
+              <div className="flex items-start justify-between gap-2 px-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-bold text-gray-900">{c.login}</p>
+                  <p className="mt-0.5 text-[11px] text-gray-500">
+                    Limite {formatarMoeda(c.saldo)} · Vendido {formatarMoeda(c.entrada)}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] uppercase text-gray-500">Disponível</p>
+                  <p className="text-base font-bold tabular-nums text-emerald-700">
+                    {formatarMoeda(disp)}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-5 gap-1 border-t border-gray-100 bg-gray-50 px-2 py-2">
+                <button
+                  onClick={() => aplicarDelta(c.id, -10, "Saldo −10", c.login, c.saldo)}
+                  disabled={ajustandoId === c.id}
+                  className="rounded bg-red-100 py-2 text-xs font-semibold text-red-700 active:bg-red-200 disabled:opacity-50"
+                >
+                  −10
+                </button>
+                <button
+                  onClick={() => aplicarDelta(c.id, -1, "Saldo −1", c.login, c.saldo)}
+                  disabled={ajustandoId === c.id}
+                  className="rounded bg-gray-200 py-2 text-xs font-semibold text-gray-700 active:bg-gray-300 disabled:opacity-50"
+                >
+                  −1
+                </button>
+                <button
+                  onClick={() => aplicarDelta(c.id, 1, "Saldo +1", c.login, c.saldo)}
+                  disabled={ajustandoId === c.id}
+                  className="rounded bg-gray-200 py-2 text-xs font-semibold text-gray-700 active:bg-gray-300 disabled:opacity-50"
+                >
+                  +1
+                </button>
+                <button
+                  onClick={() => aplicarDelta(c.id, 10, "Saldo +10", c.login, c.saldo)}
+                  disabled={ajustandoId === c.id}
+                  className="rounded bg-green-100 py-2 text-xs font-semibold text-green-700 active:bg-green-200 disabled:opacity-50"
+                >
+                  +10
+                </button>
+                <button
+                  onClick={() => setSelecionado(selecionado === c.id ? "" : c.id)}
+                  className={`rounded py-2 text-xs font-semibold ${
+                    selecionado === c.id
+                      ? "bg-orange-500 text-white"
+                      : "bg-blue-50 text-blue-700 active:bg-blue-100"
+                  }`}
+                >
+                  Editar
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* DESKTOP: tabela. */}
+      <div className="mb-6 hidden overflow-x-auto rounded-lg border border-gray-200 bg-white shadow md:block">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>

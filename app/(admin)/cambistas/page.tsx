@@ -325,7 +325,87 @@ export default function CambistasPage() {
         </span>
       </p>
 
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow">
+      {/* MOBILE: cards com info essencial e ações em linha. */}
+      <div className="space-y-2 md:hidden">
+        {filtrar.length === 0 && (
+          <div className="rounded-lg border-2 border-dashed border-gray-300 bg-white p-6 text-center text-sm text-gray-500">
+            Nenhum cambista para este filtro.
+          </div>
+        )}
+        {filtrar.map((c) => (
+          <div
+            key={c.id}
+            className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm"
+          >
+            <div className="flex items-start gap-2 px-3 py-2.5">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="truncate text-sm font-bold text-gray-900">
+                    {c.login}
+                  </span>
+                  {alertas.get(c.id) ? (
+                    <AlertaBadge analise={alertas.get(c.id)!} />
+                  ) : null}
+                </div>
+                <p className="mt-0.5 text-[11px] text-gray-500">
+                  Gerente: {getGerenteNome(c.gerenteId)}
+                </p>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${(c.tipo ?? "cambista") === "cliente" ? "bg-blue-100 text-blue-700" : "bg-amber-100 text-amber-700"}`}
+                  >
+                    {(c.tipo ?? "cambista") === "cliente" ? "Cliente" : "Cambista"}
+                  </span>
+                  <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] text-red-700">
+                    {c.risco}
+                  </span>
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${c.status === "ativo" ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-600"}`}
+                  >
+                    {c.status === "ativo" ? "Ativo" : "Inativo"}
+                  </span>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] uppercase text-gray-500">Saldo</p>
+                <p className="text-sm font-bold tabular-nums text-gray-800">
+                  {formatarMoeda(c.saldo)}
+                </p>
+              </div>
+            </div>
+            <div className="border-t border-gray-100 bg-gray-50 px-3 py-1.5 text-[11px] text-gray-600">
+              <p>
+                <span className="font-medium">Cotação:</span> M{getCotacaoEfetiva(c, "milhar")} · C{getCotacaoEfetiva(c, "centena")} · D{getCotacaoEfetiva(c, "dezena")} · G{getCotacaoEfetiva(c, "grupo")}
+              </p>
+              <p>
+                <span className="font-medium">Comissão:</span> M{c.comissaoMilhar}% · C{c.comissaoCentena}% · D{c.comissaoDezena}% · G{c.comissaoGrupo}%
+              </p>
+              {c.cotacoes && Object.keys(c.cotacoes).length > 0 && (
+                <p className="mt-0.5 text-[10px] font-semibold text-blue-700">
+                  Cotações especiais configuradas
+                </p>
+              )}
+            </div>
+            <div className="grid grid-cols-2 divide-x divide-gray-100 border-t border-gray-100 text-xs font-medium">
+              <button
+                onClick={() => abrirEditar(c)}
+                className="bg-orange-50 py-2 text-orange-700 active:bg-orange-100"
+              >
+                Editar
+              </button>
+              <button
+                onClick={() => apagar(c.id)}
+                className="bg-red-50 py-2 text-red-700 active:bg-red-100"
+              >
+                Apagar
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* DESKTOP: tabela. */}
+      <div className="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white shadow md:block">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
