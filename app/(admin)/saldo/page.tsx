@@ -59,6 +59,46 @@ export default function SaldoPage() {
     }
   };
 
+  /** DEFINE o saldo direto (sobrescreve, NÃO soma).
+   *  Usado pelos campos "Valor manual" / "Definir saldo" — quando o admin
+   *  digita 1000 ele quer que o saldo VIRE 1000, não que adicione 1000 ao
+   *  valor existente. */
+  const definirSaldo = (
+    cId: string,
+    novoSaldo: number,
+    login: string,
+    saldoAtual: number,
+  ) => {
+    if (ajustandoId === cId) return;
+    if (!Number.isFinite(novoSaldo) || novoSaldo < 0) {
+      alert("Valor inválido. Use um número >= 0.");
+      return;
+    }
+    if (novoSaldo > 10_000_000) {
+      alert("Valor fora do limite (máx 10 milhões).");
+      return;
+    }
+    const fmt = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    if (
+      !window.confirm(
+        `Definir saldo de ${login}?\n\n` +
+          `Atual: ${fmt(saldoAtual)}\n` +
+          `Novo: ${fmt(novoSaldo)}\n` +
+          `Diferença: ${novoSaldo - saldoAtual >= 0 ? "+" : ""}${fmt(novoSaldo - saldoAtual)}`,
+      )
+    ) {
+      return;
+    }
+    setAjustandoId(cId);
+    try {
+      updateCambista(cId, { saldo: novoSaldo });
+      addLog("Definiu saldo", `${login}: ${formatarMoeda(novoSaldo)}`);
+      setCambistas(getCambistasPorCodigo(codigo ?? ""));
+    } finally {
+      setAjustandoId(null);
+    }
+  };
+
   const filtrar = useMemo(() => {
     let r = cambistas;
     if (filtroGerente !== "todos") {
@@ -80,12 +120,15 @@ export default function SaldoPage() {
   };
 
   const handleAjusteManual = () => {
-    if (!cambista || !Number.isFinite(ajuste) || ajuste === 0) return;
-    if (Math.abs(ajuste) > 1_000_000) {
-      alert("Valor de ajuste fora do limite permitido.");
+    if (!cambista || !Number.isFinite(ajuste) || ajuste < 0) return;
+    if (ajuste > 10_000_000) {
+      alert("Valor fora do limite permitido (máx 10 milhões).");
       return;
     }
-    aplicarDelta(cambista.id, ajuste, "Ajustou saldo", cambista.login, cambista.saldo);
+    // DEFINE o saldo (sobrescreve). Antes esse campo somava ao saldo existente,
+    // o que era contra-intuitivo: digitar 1000 e ver o saldo virar 1500 quando
+    // já tinha 500. Para somar/subtrair use os botões −10 / −1 / +1 / +10 / +100.
+    definirSaldo(cambista.id, ajuste, cambista.login, cambista.saldo);
     setAjuste(0);
   };
 
@@ -126,7 +169,7 @@ export default function SaldoPage() {
         </select>
       </div>
 
-      {/* MOBILE: cards com info do saldo + ajustes rápidos. */}
+      {/* MOBILE: cards com info do saldo + ajustes rápidos + input pra definir. */}
       <div className="mb-6 space-y-2 md:hidden">
         {filtrar.length === 0 && (
           <div className="rounded-lg border-2 border-dashed border-gray-300 bg-white p-6 text-center text-sm text-gray-500">
@@ -135,6 +178,7 @@ export default function SaldoPage() {
         )}
         {filtrar.map((c) => {
           const disp = Math.max(0, c.saldo - c.entrada);
+          const editandoEsse = selecionado === c.id;
           return (
             <div
               key={c.id}
@@ -184,16 +228,51 @@ export default function SaldoPage() {
                   +10
                 </button>
                 <button
-                  onClick={() => setSelecionado(selecionado === c.id ? "" : c.id)}
+                  onClick={() => {
+                    setSelecionado(editandoEsse ? "" : c.id);
+                    setAjuste(0);
+                  }}
                   className={`rounded py-2 text-xs font-semibold ${
-                    selecionado === c.id
+                    editandoEsse
                       ? "bg-orange-500 text-white"
                       : "bg-blue-50 text-blue-700 active:bg-blue-100"
                   }`}
                 >
-                  Editar
+                  {editandoEsse ? "Fechar" : "Definir"}
                 </button>
               </div>
+              {editandoEsse && (
+                <div className="border-t border-gray-100 bg-orange-50 px-3 py-3">
+                  <label className="mb-1.5 block text-[11px] font-medium text-orange-900">
+                    Definir saldo de {c.login} (sobrescreve, não soma):
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      value={ajuste || ""}
+                      onChange={(e) => setAjuste(Number(e.target.value) || 0)}
+                      placeholder={`Atual: ${formatarMoeda(c.saldo)}`}
+                      className="flex-1 rounded border border-orange-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-orange-500 focus:outline-none"
+                    />
+                    <button
+                      onClick={() => {
+                        if (ajuste < 0) return;
+                        definirSaldo(c.id, ajuste, c.login, c.saldo);
+                        setAjuste(0);
+                        setSelecionado("");
+                      }}
+                      disabled={ajustandoId === c.id || ajuste < 0}
+                      className="rounded bg-orange-500 px-4 py-2 text-sm font-semibold text-white active:bg-orange-600 disabled:opacity-50"
+                    >
+                      Salvar
+                    </button>
+                  </div>
+                  <p className="mt-1 text-[10px] text-orange-800">
+                    Ex.: digitar 1000 e tocar em Salvar = saldo do cliente vira R$ 1.000,00.
+                  </p>
+                </div>
+              )}
             </div>
           );
         })}
@@ -314,21 +393,27 @@ export default function SaldoPage() {
               </button>
             </div>
             <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-700">Definir saldo:</span>
               <input
                 type="number"
                 value={ajuste || ""}
                 onChange={(e) => setAjuste(Number(e.target.value) || 0)}
-                placeholder="Valor manual"
-                className="w-24 rounded border border-gray-300 px-3 py-2"
+                placeholder={`Atual: ${cambista.saldo.toFixed(2)}`}
+                className="w-32 rounded border border-gray-300 px-3 py-2"
               />
               <button
                 onClick={handleAjusteManual}
-                disabled={ajuste === 0}
+                disabled={ajuste < 0}
                 className="rounded bg-orange-500 px-4 py-2 font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+                title="Sobrescreve o saldo atual com este valor (não soma)."
               >
-                Aplicar
+                Salvar
               </button>
             </div>
+            <p className="basis-full text-xs text-gray-500">
+              <strong>Salvar</strong> sobrescreve o saldo. Para somar/subtrair use os
+              botões <code>−10 / −1 / +1 / +10 / +100</code>.
+            </p>
           </div>
         </div>
       )}
