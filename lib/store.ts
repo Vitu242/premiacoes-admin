@@ -1780,11 +1780,24 @@ function atualizarBilhetesComResultado(resultado: Resultado): Bilhete[] {
     if (b.extracaoId !== resultado.extracaoId || b.situacao === "cancelado") continue;
     if (normalizarDataBilhete(b.data) !== dataNorm) continue;
     const cam = cambistas.find((c) => c.id === b.cambistaId);
-    const conf = conferirBilhete(b, resultado, cam ?? null, getCotacaoEfetiva, getPremioMilharBrinde());
-    const novaSituacao = conf.valorGanho > 0 ? "pago" : "perdedor";
     const idx = bilhetes.findIndex((x) => x.id === b.id);
     if (idx < 0) continue;
     const situacaoAnterior = bilhetes[idx].situacao;
+
+    // CRÍTICO: bilhete que JÁ ESTAVA pago NÃO vira perdedor automaticamente
+    // só porque o resultado foi atualizado depois. Cenário real: o cron
+    // pega um resultado parcial/errado primeiro, paga o cliente, e depois
+    // o cron `completar=1` sobrescreve com o resultado correto. Se isso
+    // virasse o bilhete em perdedor de novo, o caixa do cambista ficaria
+    // furado (saída/comissão/entrada bagunçados).
+    //
+    // Para REVERTER um bilhete pago, o admin tem que cancelar manualmente
+    // (botão "Cancelar" em /bilhetes) ou rodar "Atualizar Caixa" que faz
+    // a reconciliação completa partindo dos resultados atuais.
+    if (situacaoAnterior === "pago") continue;
+
+    const conf = conferirBilhete(b, resultado, cam ?? null, getCotacaoEfetiva, getPremioMilharBrinde());
+    const novaSituacao = conf.valorGanho > 0 ? "pago" : "perdedor";
     if (situacaoAnterior === novaSituacao) continue;
 
     bilhetes[idx] = { ...bilhetes[idx], situacao: novaSituacao };
@@ -1799,22 +1812,6 @@ function atualizarBilhetesComResultado(resultado: Resultado): Bilhete[] {
         deltaPorCambista.set(
           String(cam.id),
           (deltaPorCambista.get(String(cam.id)) ?? 0) + conf.valorGanho,
-        );
-      }
-    }
-    // Reverte saída quando bilhete que estava `pago` agora vira `perdedor`
-    // (resultado corrigido via cron, edição, etc.). Sem isso, prêmio antigo
-    // ficava preso no caixa do cambista.
-    if (situacaoAnterior === "pago" && novaSituacao !== "pago" && cam) {
-      const dtBilhete = parseData(b.data);
-      const dtPrest = parseData(cam.ultimaPrestacao);
-      const contaAberta = !dtPrest || !dtBilhete || dtBilhete.getTime() > dtPrest.getTime();
-      if (contaAberta) {
-        // Tenta achar resultado anterior pra calcular o que foi pago.
-        // Fallback: zera sem subtrair (safe — reconciliar refará a conta).
-        deltaPorCambista.set(
-          String(cam.id),
-          (deltaPorCambista.get(String(cam.id)) ?? 0) - 0,
         );
       }
     }

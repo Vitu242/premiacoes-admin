@@ -232,6 +232,31 @@ async function processar(req: Request): Promise<NextResponse> {
         continue;
       }
 
+      // CRÍTICO: NÃO sobrescrever um resultado existente se o 1º prêmio
+      // FOR DIFERENTE do que já está salvo. Cenário real do bug:
+      //   - Cron pega resultado preliminar com 1º=ABCD
+      //   - Bilhetes da extração são conferidos: alguns viram "pago"
+      //   - Cambistas pagam os clientes
+      //   - Cron `completar=1` pega resultado oficial com 1º=WXYZ
+      //   - Sem essa proteção, o resultado seria sobrescrito,
+      //     bilhetes "pago" virariam "perdedor", caixa do cambista
+      //     ficava furado (saída/comissão/entrada bagunçadas).
+      // Se o 1º prêmio mudou, é mudança CRÍTICA — deixa o admin
+      // resolver manualmente (apagar e re-criar).
+      if (existente && completar) {
+        const premioExistente1 = (
+          (existente.premios ?? {}) as Record<string, string>
+        )["1"];
+        if (premioExistente1 && premioExistente1 !== grupos1) {
+          log.push({
+            ...base,
+            status: "erro_fonte",
+            erro: `1º prêmio mudou (${premioExistente1} → ${grupos1}); sobrescrita bloqueada para proteger bilhetes pagos`,
+          });
+          continue;
+        }
+      }
+
       // 4) Salva. Se `codigoBanca` veio na query, herda em `codigo_banca`
       //    (compatível com a migração de tenant). Em modo `completar`,
       //    fazemos UPDATE no registro existente (preserva o ID original
