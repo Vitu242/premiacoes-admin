@@ -276,7 +276,6 @@ export default function ClienteBilhetePage() {
               {detalhe?.id === b.id && (() => {
                 const resultado = getResultadoByExtracaoData(b.extracaoId, b.data);
                 const conf = conferirBilhete(b, resultado, cambista ?? null, getCotacaoEfetiva, getPremioMilharBrinde());
-                const captionShare = `Bilhete ${b.codigo}\n${b.extracaoNome}\nTotal: ${formatarMoeda(b.total)}`;
                 return (
                 <div className="mt-4 border-t border-gray-100 pt-4">
                   <BilheteDetalhado
@@ -324,7 +323,7 @@ export default function ClienteBilhetePage() {
 
                     <CompartilharBilheteBtn
                       targetRef={bilheteRef}
-                      caption={captionShare}
+                      caption=""
                       filename={`bilhete-${b.codigo}.png`}
                       label="Enviar"
                       className="flex-1 min-w-[100px]"
