@@ -140,15 +140,53 @@ export async function initFromSupabase(): Promise<boolean> {
   } catch {
     /* ignore */
   }
+  /**
+   * Carrega TODAS as linhas de uma tabela paginando com `range`. O PostgREST
+   * tem limite padrão de 1000 linhas/request — sem paginar, registros mais
+   * recentes ficam de fora silenciosamente. Foi exatamente o que aconteceu
+   * com o bilhete da Andresa (1087 bilhetes na tabela, só 999 voltavam).
+   *
+   * Ordena por `id desc` (mais novos primeiro) por dois motivos:
+   *   1) O que importa pro operacional do dia é sempre o mais recente.
+   *   2) Se algum dia precisarmos limitar (ex.: pegar só últimos 5000),
+   *      o corte fica nos antigos, que já foram prestação fechada.
+   */
+  const fetchTodas = async <T>(tabela: string): Promise<{ data: T[] | null; error: { message?: string } | null }> => {
+    const PAGE = 1000;
+    const out: T[] = [];
+    let from = 0;
+    let lastError: { message?: string } | null = null;
+    for (let i = 0; i < 20; i++) {
+      // 20 páginas = 20k linhas, suficiente para os próximos meses;
+      // a partir disso o admin deve fazer prestação/arquivamento.
+      const { data, error } = await supabase!
+        .from(tabela)
+        .select("*")
+        .order("id", { ascending: false })
+        .range(from, from + PAGE - 1);
+      if (error) {
+        lastError = error;
+        break;
+      }
+      const arr = (data as T[] | null) ?? [];
+      out.push(...arr);
+      if (arr.length < PAGE) break;
+      from += PAGE;
+    }
+    return { data: out, error: lastError };
+  };
+
   try {
     const [gerentesRes, cambistasRes, extracoesRes, bilhetesRes, lancamentosRes, resultadosRes, configRes] =
       await Promise.all([
         supabase.from("gerentes").select("*"),
         supabase.from("cambistas").select("*"),
         supabase.from("extracoes").select("*"),
-        supabase.from("bilhetes").select("*"),
-        supabase.from("lancamentos").select("*"),
-        supabase.from("resultados").select("*"),
+        // bilhetes / lancamentos / resultados são as tabelas que crescem;
+        // paginadas pra não perder registros recentes acima do limite 1000.
+        fetchTodas<Record<string, unknown>>("bilhetes"),
+        fetchTodas<Record<string, unknown>>("lancamentos"),
+        fetchTodas<Record<string, unknown>>("resultados"),
         supabase.from("config").select("*"),
       ]);
 
