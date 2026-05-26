@@ -478,7 +478,10 @@ export default function ClienteVenderPage() {
       setStep(mostraMilharBrinde ? "milharBrinde" : "valor");
       setValor("");
     }
-    else { setStep("premio"); setPremio(""); }
+    // Default "1/1": evita o cliente ter que digitar quando o jogo é só
+    // 1º prêmio (caso mais comum). Se ele quiser 1/5 etc, basta apagar
+    // (botão ⌫) e digitar o novo.
+    else { setStep("premio"); setPremio("1/1"); }
     setErro("");
   };
 
@@ -1041,149 +1044,166 @@ export default function ClienteVenderPage() {
         </div>
       )}
 
-      {/* Step: Prêmio (digitar ex: 1/5 = 1º ao 5º) */}
+      {/* Step: Prêmio — mesmo layout do step "numeros":
+          cabeçalho rolável + teclado fixo no rodapé. */}
       {step === "premio" && (
-        <div>
-          <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
-            {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros}
-          </p>
-          <p className="mb-2 text-slate-700 dark:text-slate-200">Em qual(is) prêmio(s) vale este jogo?</p>
-          <p className="mb-4 text-sm text-slate-600 dark:text-slate-400">
-            Esta loteria permite até 1/{premioMax}. Exemplo: 1/5 = do 1º ao 5º prêmio.
-          </p>
-          <div className="mb-4 flex min-h-14 items-center justify-center rounded-xl border-2 border-slate-200 bg-slate-50 px-2 py-3 text-center text-2xl font-mono font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50">
-            {premio || "—"}
-          </div>
-          <div className="mb-4 grid grid-cols-3 gap-3">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map((d, i) => (
-              <button
-                key={d || `empty-${i}`}
-                type="button"
-                onClick={() => d && adicionarDigitoPremio(d)}
-                disabled={d === ""}
-                className="rounded-xl bg-slate-100 py-4 text-xl font-medium text-slate-900 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 disabled:invisible"
-              >
-                {d === "⌫" ? "⌫" : d}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={confirmarPremio}
-            className="w-full rounded-xl bg-green-600 py-3 font-semibold text-white"
-          >
-            Continuar
-          </button>
-        </div>
-      )}
-
-      {/* Step: Milhar Brinde (opcional) - só se cambista habilitou */}
-      {step === "milharBrinde" && mostraMilharBrinde && (
-        <div>
-          <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
-            {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros}
-          </p>
-          <p className="mb-2 text-slate-700 dark:text-slate-200">Milhar brinde – 4 dígitos:</p>
-          <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
-            Já geramos uma milhar aleatória. Para trocar, apague e digite outra.
-          </p>
-          <div className="mb-4 flex h-14 items-center justify-center rounded-xl border-2 border-slate-200 bg-slate-50 text-2xl font-mono font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50">
-            {milharBrinde || "—"}
-          </div>
-          <div className="mb-4 grid grid-cols-3 gap-3">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map((d) => (
-              <button
-                key={d}
-                onClick={() => adicionarDigitoMilharBrinde(d)}
-                disabled={d === ""}
-                className="rounded-xl bg-slate-100 py-4 text-xl font-medium text-slate-900 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 disabled:invisible"
-              >
-                {d}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={confirmarMilharBrinde}
-            className="w-full rounded-xl bg-green-600 py-3 font-semibold text-white"
-          >
-            Prosseguir
-          </button>
-        </div>
-      )}
-
-      {/* Step: Valor */}
-      {step === "valor" && cambista && (
-        <div>
-          <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
-            {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros} — prêmio {premio}
-            {milharBrinde && <span className="text-green-600 dark:text-green-400"> + Brinde {milharBrinde}</span>}
-          </p>
-          <p className="mb-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">
-            Disponível para venda: <strong>{formatarMoeda(getSaldoDisponivel(cambista))}</strong>
-          </p>
-          {getSaldoDisponivel(cambista) <= 0 && (
-            <p className="mb-4 rounded-lg bg-red-50 p-2 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-300">
-              Saldo zerado. Peça ao administrador para adicionar limite antes de vender.
+        <div className="-mx-4 -mb-4 flex flex-col" style={{ minHeight: "calc(100vh - 8rem)" }}>
+          <div className="flex-1 overflow-y-auto px-4 pb-2">
+            <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
+              {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros}
             </p>
-          )}
-          <p className="mb-2 text-slate-700 dark:text-slate-200">Valor da aposta (R$):</p>
-          <input
-            type="text"
-            inputMode="decimal"
-            placeholder="0,00"
-            value={valor}
-            onChange={(e) => setValor(e.target.value.replace(/[^0-9,]/g, ""))}
-            className="mb-4 w-full rounded-xl border border-slate-300 bg-white px-4 py-4 text-xl font-medium text-slate-900 placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50 dark:placeholder:text-slate-500"
-          />
-          {qtdJogos > 1 && (
-            <div className="mb-4 grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setValorModo("dividir")}
-                className={`rounded-xl border-2 p-4 text-left transition ${
-                  valorModo === "dividir"
-                    ? "border-green-500 bg-green-50 text-green-800 dark:border-green-500 dark:bg-green-950/40 dark:text-green-200"
-                    : "border-slate-200 bg-slate-50 text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
-                }`}
-              >
-                <div className="text-sm font-medium">Dividir</div>
-                <div className="text-lg font-bold">{formatarMoeda(valorPorJogoDividir)}</div>
-                <div className="text-xs text-slate-600 dark:text-slate-400">
-                  {formatarMoeda(valorTotalDividir)} ÷ {qtdJogos} jogos
-                </div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setValorModo("multiplicar")}
-                className={`rounded-xl border-2 p-4 text-left transition ${
-                  valorModo === "multiplicar"
-                    ? "border-green-500 bg-green-50 text-green-800 dark:border-green-500 dark:bg-green-950/40 dark:text-green-200"
-                    : "border-slate-200 bg-slate-50 text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
-                }`}
-              >
-                <div className="text-sm font-medium">Multiplicar</div>
-                <div className="text-lg font-bold">{formatarMoeda(valorTotalMultiplicar)}</div>
-                <div className="text-xs text-slate-600 dark:text-slate-400">
-                  {formatarMoeda(valorDigitado)} × {qtdJogos} jogos
-                </div>
-              </button>
+            <p className="mb-2 text-slate-700 dark:text-slate-200">Em qual(is) prêmio(s) vale este jogo?</p>
+            <p className="mb-3 text-xs text-slate-600 dark:text-slate-400">
+              Padrão: <strong>1/1</strong> (só o 1º prêmio). Para 1/5 (1º ao 5º), apague e digite. Esta loteria permite até 1/{premioMax}.
+            </p>
+            <div className="mb-2 flex min-h-12 items-center justify-center rounded-xl border-2 border-slate-200 bg-slate-50 px-2 py-2 text-center text-2xl font-mono font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50">
+              {premio || "—"}
             </div>
-          )}
-          <p className="mb-4 text-sm text-slate-600 dark:text-slate-400">
-            Cotação: {formatarMoeda(getCotacaoEfetiva(cambista, modalidade!))} (se ganhar)
-          </p>
-          <button
-            onClick={confirmarValor}
-            disabled={getSaldoDisponivel(cambista) <= 0 || valorTotal <= 0}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 py-3 font-semibold text-white shadow-md transition-all active:scale-[0.99] disabled:cursor-not-allowed disabled:from-slate-400 disabled:to-slate-400"
-          >
-            {carrinho.length === 0 ? "Adicionar ao bilhete" : `Adicionar como jogo ${carrinho.length + 1}`}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-4 w-4">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14"/>
-            </svg>
-          </button>
-          <p className="mt-2 text-center text-[11px] text-slate-500 dark:text-slate-400">
-            Você pode adicionar vários jogos antes de finalizar o bilhete. A milhar brinde é permitida apenas uma vez por bilhete.
-          </p>
+          </div>
+
+          <div className="sticky bottom-0 z-10 border-t border-slate-200 bg-white px-4 pb-3 pt-3 shadow-[0_-2px_8px_rgba(0,0,0,0.04)] dark:border-slate-800 dark:bg-slate-950">
+            <div className="mb-2 grid grid-cols-3 gap-2">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map((d, i) => (
+                <button
+                  key={d || `empty-${i}`}
+                  type="button"
+                  onClick={() => d && adicionarDigitoPremio(d)}
+                  disabled={d === ""}
+                  className="rounded-xl bg-slate-100 py-3 text-lg font-medium text-slate-900 active:bg-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:active:bg-slate-700 disabled:invisible"
+                >
+                  {d === "⌫" ? "⌫" : d}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={confirmarPremio}
+              className="w-full rounded-xl bg-green-600 py-2.5 text-sm font-semibold text-white active:bg-green-700"
+            >
+              Continuar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step: Milhar Brinde — mesmo layout (rolável topo + teclado fixo). */}
+      {step === "milharBrinde" && mostraMilharBrinde && (
+        <div className="-mx-4 -mb-4 flex flex-col" style={{ minHeight: "calc(100vh - 8rem)" }}>
+          <div className="flex-1 overflow-y-auto px-4 pb-2">
+            <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
+              {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros}
+            </p>
+            <p className="mb-1 text-slate-700 dark:text-slate-200">Milhar brinde – 4 dígitos:</p>
+            <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+              Já geramos uma milhar aleatória. Para trocar, apague e digite outra.
+            </p>
+            <div className="mb-2 flex h-12 items-center justify-center rounded-xl border-2 border-slate-200 bg-slate-50 text-2xl font-mono font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50">
+              {milharBrinde || "—"}
+            </div>
+          </div>
+
+          <div className="sticky bottom-0 z-10 border-t border-slate-200 bg-white px-4 pb-3 pt-3 shadow-[0_-2px_8px_rgba(0,0,0,0.04)] dark:border-slate-800 dark:bg-slate-950">
+            <div className="mb-2 grid grid-cols-3 gap-2">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => adicionarDigitoMilharBrinde(d)}
+                  disabled={d === ""}
+                  className="rounded-xl bg-slate-100 py-3 text-lg font-medium text-slate-900 active:bg-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:active:bg-slate-700 disabled:invisible"
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={confirmarMilharBrinde}
+              className="w-full rounded-xl bg-green-600 py-2.5 text-sm font-semibold text-white active:bg-green-700"
+            >
+              Prosseguir
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step: Valor — input nativo (precisa vírgula) + botão sticky.
+          Cabeçalho rolável + botão "Adicionar" sempre visível no rodapé. */}
+      {step === "valor" && cambista && (
+        <div className="-mx-4 -mb-4 flex flex-col" style={{ minHeight: "calc(100vh - 8rem)" }}>
+          <div className="flex-1 overflow-y-auto px-4 pb-2">
+            <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
+              {extracao?.nome} → {(modalidade ? (COTACOES_LABELS[modalidade] ?? modalidade) : "—")} {numeros} — prêmio {premio}
+              {milharBrinde && <span className="text-green-600 dark:text-green-400"> + Brinde {milharBrinde}</span>}
+            </p>
+            <p className="mb-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">
+              Disponível para venda: <strong>{formatarMoeda(getSaldoDisponivel(cambista))}</strong>
+            </p>
+            {getSaldoDisponivel(cambista) <= 0 && (
+              <p className="mb-3 rounded-lg bg-red-50 p-2 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-300">
+                Saldo zerado. Peça ao administrador para adicionar limite antes de vender.
+              </p>
+            )}
+            <p className="mb-1 text-sm text-slate-700 dark:text-slate-200">Valor da aposta (R$):</p>
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder="0,00"
+              value={valor}
+              onChange={(e) => setValor(e.target.value.replace(/[^0-9,]/g, ""))}
+              className="mb-3 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-xl font-medium text-slate-900 placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50 dark:placeholder:text-slate-500"
+            />
+            {qtdJogos > 1 && (
+              <div className="mb-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setValorModo("dividir")}
+                  className={`rounded-xl border-2 p-3 text-left transition ${
+                    valorModo === "dividir"
+                      ? "border-green-500 bg-green-50 text-green-800 dark:border-green-500 dark:bg-green-950/40 dark:text-green-200"
+                      : "border-slate-200 bg-slate-50 text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                  }`}
+                >
+                  <div className="text-xs font-medium">Dividir</div>
+                  <div className="text-base font-bold">{formatarMoeda(valorPorJogoDividir)}</div>
+                  <div className="text-[10px] text-slate-600 dark:text-slate-400">
+                    {formatarMoeda(valorTotalDividir)} ÷ {qtdJogos} jogos
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setValorModo("multiplicar")}
+                  className={`rounded-xl border-2 p-3 text-left transition ${
+                    valorModo === "multiplicar"
+                      ? "border-green-500 bg-green-50 text-green-800 dark:border-green-500 dark:bg-green-950/40 dark:text-green-200"
+                      : "border-slate-200 bg-slate-50 text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                  }`}
+                >
+                  <div className="text-xs font-medium">Multiplicar</div>
+                  <div className="text-base font-bold">{formatarMoeda(valorTotalMultiplicar)}</div>
+                  <div className="text-[10px] text-slate-600 dark:text-slate-400">
+                    {formatarMoeda(valorDigitado)} × {qtdJogos} jogos
+                  </div>
+                </button>
+              </div>
+            )}
+            <p className="mb-2 text-xs text-slate-600 dark:text-slate-400">
+              Cotação: {formatarMoeda(getCotacaoEfetiva(cambista, modalidade!))} (se ganhar)
+            </p>
+          </div>
+
+          <div className="sticky bottom-0 z-10 border-t border-slate-200 bg-white px-4 pb-3 pt-3 shadow-[0_-2px_8px_rgba(0,0,0,0.04)] dark:border-slate-800 dark:bg-slate-950">
+            <button
+              onClick={confirmarValor}
+              disabled={getSaldoDisponivel(cambista) <= 0 || valorTotal <= 0}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 py-3 font-semibold text-white shadow-md transition-all active:scale-[0.99] disabled:cursor-not-allowed disabled:from-slate-400 disabled:to-slate-400"
+            >
+              {carrinho.length === 0 ? "Adicionar ao bilhete" : `Adicionar como jogo ${carrinho.length + 1}`}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-4 w-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14"/>
+              </svg>
+            </button>
+            <p className="mt-1 text-center text-[10px] text-slate-500 dark:text-slate-400">
+              Você pode adicionar vários jogos antes de finalizar. Milhar brinde só uma vez por bilhete.
+            </p>
+          </div>
         </div>
       )}
 
