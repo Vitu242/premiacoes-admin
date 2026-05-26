@@ -463,7 +463,6 @@ const BilheteDetalhado = forwardRef<HTMLDivElement, Props>(function BilheteDetal
           const qtd = Math.max(1, palpites.length);
           const valorPorPalpite = it.valor / qtd;
           const isGrupo = it.modalidade.includes("grupo");
-          const cot = cotacaoPara(it.modalidade);
 
           return (
             <div key={i} style={S.item}>
@@ -485,7 +484,7 @@ const BilheteDetalhado = forwardRef<HTMLDivElement, Props>(function BilheteDetal
                       <div style={S.palpiteInfo}>
                         <p style={S.palpiteNome} title={titulo}>{titulo}</p>
                         <p style={S.palpiteMeta}>
-                          {it.premio ?? "1/1"} · Cotação {moedaSemPrefixo(cot)}
+                          {it.premio ?? "1/1"}
                         </p>
                         <span style={S.palpiteValor}>= {moedaSemPrefixo(valorPorPalpite)}</span>
                       </div>

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabase-server";
-import { autorizarCronInterno, autorizarChefe } from "@/lib/auth-server";
+import { autorizarCronInterno, autorizarSyncRequest } from "@/lib/auth-server";
 import { conferirBilhete } from "@/lib/conferencia";
 import type { Bilhete, Cambista, Resultado } from "@/lib/types";
 import { registrarAlertaServidor } from "@/lib/alertas-server";
@@ -26,17 +26,24 @@ export const maxDuration = 120;
  *  - Chefe com senha do Lotobrasil no body.
  */
 export async function POST(req: Request) {
-  let body: { senhaLotobrasil?: string; cambistaId?: string } = {};
+  let body: { cambistaId?: string } = {};
   try {
     body = (await req.clone().json()) as typeof body;
   } catch {
     /* sem body é OK pra cron */
   }
 
+  // Autorização: cron interno (loopback) OU qualquer admin logado.
+  // Reconciliação não muda dado por dado — recalcula a partir das fontes
+  // (bilhetes/lançamentos/resultados). Não há risco de admin malicioso
+  // forjar valores. Por isso aceita admin sem senha extra do chefe.
   if (!autorizarCronInterno(req)) {
-    const auth = await autorizarChefe(body.senhaLotobrasil ?? "", req);
-    if (!auth.ok) {
-      return NextResponse.json({ ok: false, erro: auth.erro }, { status: 401 });
+    const auth = await autorizarSyncRequest(req);
+    if (!auth.ok || auth.tipo !== "admin") {
+      return NextResponse.json(
+        { ok: false, erro: auth.erro || "Não autorizado" },
+        { status: 401 },
+      );
     }
   }
 

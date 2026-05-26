@@ -11,6 +11,7 @@ import {
 } from "@/lib/store";
 import { addLog } from "@/lib/auditoria";
 import { getAdminCodigo } from "@/lib/auth";
+import { syncAuthHeader } from "@/lib/sync-queue";
 import type { Cambista } from "@/lib/types";
 import { formatarDataHoraBr } from "@/lib/date-utils";
 import { useToast } from "@/app/components/Toast";
@@ -119,21 +120,21 @@ export default function PrestarContasPage() {
   };
 
   /**
-   * Recalcula o caixa de todos os cambistas a partir dos bilhetes e
-   * lançamentos. Tenta primeiro via SERVIDOR (recalcula direto do
-   * Supabase, autoritativo) e cai pra cálculo local se falhar.
+   * Recalcula o caixa de todos os cambistas. Tenta primeiro via SERVIDOR
+   * (autoritativo, recalcula direto do Supabase paginando todas as tabelas).
+   * Se a rede falhar, cai pra cálculo local (cache do dispositivo).
+   * Autenticação: usa o header X-Sync-Auth do admin já logado — sem
+   * pedir senha do Lotobrasil.
    */
   const handleReconciliar = async () => {
     if (acaoEmAndamento) return;
     setAcaoEmAndamento(true);
     try {
-      // Snapshot antes — se algo der errado, dá pra restaurar.
       await snapshotAntesDe("pre-reconciliar");
-      // Caminho preferido: server-side (canônico, sem depender do cache local).
       try {
         const res = await fetch("/api/cambistas/reconciliar", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...syncAuthHeader() },
           body: JSON.stringify({}),
         });
         const data = (await res.json()) as {
@@ -151,45 +152,9 @@ export default function PrestarContasPage() {
           }
           return;
         }
-        // 401: cron loopback não autoriza navegador externo. Vamos pedir
-        // a senha do Lotobrasil pra autenticar como chefe.
-        if (res.status === 401) {
-          const senha = window.prompt(
-            "Digite a senha do Lotobrasil para reconciliar o caixa no servidor:",
-          );
-          if (senha) {
-            const res2 = await fetch("/api/cambistas/reconciliar", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ senhaLotobrasil: senha }),
-            });
-            const data2 = (await res2.json()) as {
-              ok?: boolean;
-              ajustados?: number;
-              erro?: string;
-            };
-            if (res2.ok && data2.ok) {
-              if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
-              addLog(
-                "Reconciliou caixa (servidor)",
-                `${data2.ajustados ?? 0} ajuste(s)`,
-              );
-              if ((data2.ajustados ?? 0) === 0) {
-                toast.info("Caixa de todos os cambistas já está correto.");
-              } else {
-                toast.success(
-                  `${data2.ajustados} cambista(s) tiveram o caixa corrigido.`,
-                );
-              }
-              return;
-            }
-            throw new Error(data2.erro || "Falha na reconciliação no servidor");
-          }
-        }
         throw new Error(data.erro || `HTTP ${res.status}`);
       } catch (e) {
         // Fallback local — recalcula com base no cache do dispositivo.
-        // Pode não corrigir bilhetes que estão só no servidor.
         console.warn("[Reconciliar] servidor falhou, usando local:", e);
         const r = reconciliarCaixaCambistas();
         if (codigo) setCambistasState(getCambistasPorCodigo(codigo));

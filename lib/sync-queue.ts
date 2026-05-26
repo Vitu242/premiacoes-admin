@@ -290,8 +290,9 @@ function isDbOverload(msg: string): boolean {
 }
 
 /** Lê do localStorage as credenciais da sessão atual (admin ou cambista)
- *  e devolve o header X-Sync-Auth no formato esperado pelo servidor. */
-function syncAuthHeader(): Record<string, string> {
+ *  e devolve o header X-Sync-Auth no formato esperado pelo servidor.
+ *  Exportado para reuso em outras chamadas REST do cliente. */
+export function syncAuthHeader(): Record<string, string> {
   if (typeof window === "undefined") return {};
   try {
     const adminRaw = localStorage.getItem("premiacoes_admin");
