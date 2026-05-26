@@ -968,62 +968,76 @@ export default function ClienteVenderPage() {
         </div>
       )}
 
-      {/* Step: Números */}
+      {/* Step: Números — layout especial para mobile.
+          Cabeçalho + lista de palpites + display rolam no topo (área scrollável)
+          e o TECLADO + Continuar + "Exibir grupos" ficam GRUDADOS NO RODAPÉ.
+          Antes, ao adicionar o 1o palpite, a badge verde aumentava a altura
+          do conteúdo e empurrava o teclado pra fora da tela. Agora não. */}
       {step === "numeros" && modalidade && (
-        <div>
-          <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">{extracao?.nome} → {COTACOES_LABELS[modalidade] ?? modalidade}</p>
-          <p className="mb-3 text-slate-700 dark:text-slate-200">
-            {getModalidadeConfig(modalidade).count > 1
-              ? `Digite os ${getModalidadeConfig(modalidade).count} números deste tipo de jogo.`
-              : `Digite o palpite. Pode seguir digitando para adicionar outros, ou toque em Continuar quando terminar.`}
-          </p>
-          {(() => {
-            const lista = todosPalpitesNumeros(numeros.trim());
-            if (lista.length === 0 && !numeros.trim()) return null;
-            return (
-              <div className="mb-3 flex flex-wrap gap-2">
-                {lista.map((p, i) => (
-                  <span
-                    key={`${i}-${p}`}
-                    className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-bold tabular-nums text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
-                  >
-                    {p}
-                  </span>
-                ))}
-              </div>
-            );
-          })()}
-          <div className="mb-4 flex min-h-14 items-center justify-center rounded-xl border-2 border-slate-200 bg-slate-50 px-2 py-3 text-center text-xl font-mono font-bold break-all text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50">
-            {numeros || "—"}
+        <div className="-mx-4 -mb-4 flex flex-col" style={{ minHeight: "calc(100vh - 8rem)" }}>
+          {/* Bloco rolável: tudo que pode crescer (lista de palpites). */}
+          <div className="flex-1 overflow-y-auto px-4 pb-2">
+            <p className="mb-2 text-sm text-slate-600 dark:text-slate-300">
+              {extracao?.nome} → {COTACOES_LABELS[modalidade] ?? modalidade}
+            </p>
+            <p className="mb-3 text-slate-700 dark:text-slate-200">
+              {getModalidadeConfig(modalidade).count > 1
+                ? `Digite os ${getModalidadeConfig(modalidade).count} números deste tipo de jogo.`
+                : `Digite o palpite. Pode seguir digitando para adicionar outros, ou toque em Continuar quando terminar.`}
+            </p>
+            {(() => {
+              const lista = todosPalpitesNumeros(numeros.trim());
+              if (lista.length === 0 && !numeros.trim()) return null;
+              return (
+                <div className="mb-3 flex flex-wrap gap-1.5">
+                  {lista.map((p, i) => (
+                    <span
+                      key={`${i}-${p}`}
+                      className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-bold tabular-nums text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
+                    >
+                      {p}
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
+            <div className="mb-2 flex min-h-12 items-center justify-center rounded-xl border-2 border-slate-200 bg-slate-50 px-2 py-2 text-center text-xl font-mono font-bold break-all text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50">
+              {numeros || "—"}
+            </div>
+            <div className="mb-2 flex items-center justify-end text-xs text-slate-600 dark:text-slate-400">
+              {contarPalpitesNumeros(numeros.trim())} palpite(s)
+            </div>
           </div>
-          <div className="mb-2 flex items-center justify-end text-sm text-slate-600 dark:text-slate-400">
-            {contarPalpitesNumeros(numeros.trim())} palpite(s)
+
+          {/* Rodapé fixo: teclado + botões. NÃO sai da tela quando palpites
+              acumulam acima (estes ficam no scroll do bloco anterior). */}
+          <div className="sticky bottom-0 z-10 border-t border-slate-200 bg-white px-4 pb-3 pt-3 shadow-[0_-2px_8px_rgba(0,0,0,0.04)] dark:border-slate-800 dark:bg-slate-950">
+            <div className="mb-2 grid grid-cols-3 gap-2">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "Espaço", "0", "⌫"].map((d) => (
+                <button
+                  key={d || "empty"}
+                  onClick={() => (d === "⌫" ? apagarDigito() : adicionarDigito(d === "Espaço" ? " " : d))}
+                  disabled={d === ""}
+                  className="rounded-xl bg-slate-100 py-3 text-lg font-medium text-slate-900 active:bg-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:active:bg-slate-700 disabled:invisible"
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={confirmarNumeros}
+              className="w-full rounded-xl bg-green-600 py-2.5 text-sm font-semibold text-white active:bg-green-700"
+            >
+              Continuar
+            </button>
+            <button
+              type="button"
+              onClick={() => setMostraTabelaGrupos(true)}
+              className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white py-2 text-xs font-medium text-slate-700 active:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:active:bg-slate-700"
+            >
+              Exibir grupos e dezenas
+            </button>
           </div>
-          <div className="mb-4 grid grid-cols-3 gap-3">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "Espaço", "0", "⌫"].map((d) => (
-              <button
-                key={d || "empty"}
-                onClick={() => (d === "⌫" ? apagarDigito() : adicionarDigito(d === "Espaço" ? " " : d))}
-                disabled={d === ""}
-                className="rounded-xl bg-slate-100 py-4 text-xl font-medium text-slate-900 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 disabled:invisible"
-              >
-                {d}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={confirmarNumeros}
-            className="w-full rounded-xl bg-green-600 py-3 font-semibold text-white"
-          >
-            Continuar
-          </button>
-          <button
-            type="button"
-            onClick={() => setMostraTabelaGrupos(true)}
-            className="mt-2 w-full rounded-xl border border-slate-300 bg-white py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-          >
-            Exibir grupos e dezenas
-          </button>
         </div>
       )}
 

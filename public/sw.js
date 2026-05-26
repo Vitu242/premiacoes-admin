@@ -4,7 +4,7 @@
  * O SW velho será descartado, todos os caches velhos apagados, e cada
  * cliente vivo recebe um postMessage para fazer location.reload().
  */
-const CACHE_VERSION = "v21";
+const CACHE_VERSION = "v22";
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `runtime-${CACHE_VERSION}`;
 
