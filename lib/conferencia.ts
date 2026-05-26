@@ -1,5 +1,6 @@
-"use client";
-
+// Módulo de lógica pura — sem hooks ou React. Pode rodar em client ou
+// server (necessário para o cron `/api/cambistas/reconciliar`). Não
+// adicionar "use client" aqui senão Next bloqueia chamadas do server.
 import type { Resultado, ItemBilhete, Bilhete, Cambista } from "./types";
 import type { ModalidadeBilhete } from "./types";
 

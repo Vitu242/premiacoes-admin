@@ -120,22 +120,85 @@ export default function PrestarContasPage() {
 
   /**
    * Recalcula o caixa de todos os cambistas a partir dos bilhetes e
-   * lançamentos. Útil se houve uma queda do servidor e o saldo ficou
-   * dessincronizado — esse botão restaura o valor correto sem perder nada.
+   * lançamentos. Tenta primeiro via SERVIDOR (recalcula direto do
+   * Supabase, autoritativo) e cai pra cálculo local se falhar.
    */
   const handleReconciliar = async () => {
     if (acaoEmAndamento) return;
     setAcaoEmAndamento(true);
     try {
-      // Snapshot antes — se reconciliar zerar algo errado, dá pra voltar.
+      // Snapshot antes — se algo der errado, dá pra restaurar.
       await snapshotAntesDe("pre-reconciliar");
-      const r = reconciliarCaixaCambistas();
-      if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
-      addLog("Reconciliou caixa", `${r.ajustados} ajuste(s)`);
-      if (r.ajustados === 0) {
-        toast.info("Caixa de todos os cambistas já está correto.");
-      } else {
-        toast.success(`${r.ajustados} cambista(s) tiveram o caixa corrigido.`);
+      // Caminho preferido: server-side (canônico, sem depender do cache local).
+      try {
+        const res = await fetch("/api/cambistas/reconciliar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          ajustados?: number;
+          erro?: string;
+        };
+        if (res.ok && data.ok) {
+          if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
+          addLog("Reconciliou caixa (servidor)", `${data.ajustados ?? 0} ajuste(s)`);
+          if ((data.ajustados ?? 0) === 0) {
+            toast.info("Caixa de todos os cambistas já está correto.");
+          } else {
+            toast.success(`${data.ajustados} cambista(s) tiveram o caixa corrigido.`);
+          }
+          return;
+        }
+        // 401: cron loopback não autoriza navegador externo. Vamos pedir
+        // a senha do Lotobrasil pra autenticar como chefe.
+        if (res.status === 401) {
+          const senha = window.prompt(
+            "Digite a senha do Lotobrasil para reconciliar o caixa no servidor:",
+          );
+          if (senha) {
+            const res2 = await fetch("/api/cambistas/reconciliar", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ senhaLotobrasil: senha }),
+            });
+            const data2 = (await res2.json()) as {
+              ok?: boolean;
+              ajustados?: number;
+              erro?: string;
+            };
+            if (res2.ok && data2.ok) {
+              if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
+              addLog(
+                "Reconciliou caixa (servidor)",
+                `${data2.ajustados ?? 0} ajuste(s)`,
+              );
+              if ((data2.ajustados ?? 0) === 0) {
+                toast.info("Caixa de todos os cambistas já está correto.");
+              } else {
+                toast.success(
+                  `${data2.ajustados} cambista(s) tiveram o caixa corrigido.`,
+                );
+              }
+              return;
+            }
+            throw new Error(data2.erro || "Falha na reconciliação no servidor");
+          }
+        }
+        throw new Error(data.erro || `HTTP ${res.status}`);
+      } catch (e) {
+        // Fallback local — recalcula com base no cache do dispositivo.
+        // Pode não corrigir bilhetes que estão só no servidor.
+        console.warn("[Reconciliar] servidor falhou, usando local:", e);
+        const r = reconciliarCaixaCambistas();
+        if (codigo) setCambistasState(getCambistasPorCodigo(codigo));
+        addLog("Reconciliou caixa (local)", `${r.ajustados} ajuste(s)`);
+        if (r.ajustados === 0) {
+          toast.info("Caixa de todos os cambistas já está correto.");
+        } else {
+          toast.success(`${r.ajustados} cambista(s) tiveram o caixa corrigido.`);
+        }
       }
     } catch (e) {
       toast.error(`Falha ao reconciliar: ${(e as Error).message}`);
