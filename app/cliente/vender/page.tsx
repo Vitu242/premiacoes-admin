@@ -15,10 +15,13 @@ import {
   getPremioMaxExtracao,
   getConfig,
 } from "@/lib/store";
-import type { Extracao, ModalidadeBilhete, ItemBilhete } from "@/lib/types";
+import type { Extracao, ModalidadeBilhete, ItemBilhete, Bilhete } from "@/lib/types";
 import { COTACOES_LABELS, modalidadePodeApostar } from "@/lib/cotacoes";
 import type { CotacaoKey, StatusModalidade } from "@/lib/cotacoes";
 import { useConfigRefresh } from "@/lib/use-config-refresh";
+import BilheteDetalhado from "@/app/components/BilheteDetalhado";
+import CompartilharBilheteBtn from "@/app/components/CompartilharBilheteBtn";
+import { useBranding } from "@/app/components/BrandingProvider";
 
 type Step = "extracao" | "modalidade" | "variante" | "numeros" | "premio" | "milharBrinde" | "valor" | "carrinho" | "confirmar";
 
@@ -129,7 +132,9 @@ export default function ClienteVenderPage() {
   const [valorModo, setValorModo] = useState<"dividir" | "multiplicar">("multiplicar");
   const [erro, setErro] = useState("");
   const [apostasAtivas, setApostasAtivas] = useState(true);
-  const [sucesso, setSucesso] = useState<{ codigo: string } | null>(null);
+  const [sucesso, setSucesso] = useState<Bilhete | null>(null);
+  const bilheteSucessoRef = useRef<HTMLDivElement>(null);
+  const { branding } = useBranding();
   const [enviandoVenda, setEnviandoVenda] = useState(false);
   const [carrinho, setCarrinho] = useState<ItemCarrinho[]>([]);
   const [mostraTabelaGrupos, setMostraTabelaGrupos] = useState(false);
@@ -717,7 +722,7 @@ export default function ClienteVenderPage() {
         data: new Date().toLocaleString("pt-BR"),
         situacao: "pendente",
       });
-      setSucesso({ codigo: bilhete.codigo });
+      setSucesso(bilhete);
       limparTudo();
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao finalizar venda.");
@@ -789,31 +794,87 @@ export default function ClienteVenderPage() {
   }
 
   if (sucesso) {
+    // Tenta pegar o código da banca da sessão do cliente — usado só pra
+    // formar o nome amigável quando o branding.displayName está vazio.
+    let codigoBancaSucesso = "";
+    if (typeof window !== "undefined") {
+      try {
+        const auth = JSON.parse(
+          localStorage.getItem("premiacoes_cliente") || "{}",
+        ) as { codigo?: string };
+        codigoBancaSucesso = auth.codigo || "";
+      } catch {
+        /* ignore */
+      }
+    }
+    const bancaNome =
+      branding.displayName ||
+      (codigoBancaSucesso
+        ? codigoBancaSucesso.charAt(0).toUpperCase() +
+          codigoBancaSucesso.slice(1) +
+          " Premiações"
+        : "Premiações");
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-emerald-50 to-white p-4 pb-24 dark:from-slate-900 dark:to-slate-950">
-        <div className="mx-auto w-full max-w-md rounded-3xl border border-emerald-100 bg-white p-8 text-center shadow-xl dark:border-slate-700 dark:bg-slate-800">
-          <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/40">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} className="h-10 w-10 text-emerald-600 dark:text-emerald-400">
+      <div className="min-h-screen bg-gradient-to-b from-emerald-50 to-white pb-24 dark:from-slate-900 dark:to-slate-950">
+        {/* Header simples com banner verde de sucesso. */}
+        <div className="bg-gradient-to-r from-emerald-500 to-green-600 px-4 py-3 text-white shadow">
+          <div className="flex items-center justify-center gap-2">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={3}
+              className="h-5 w-5"
+            >
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
+            <span className="text-sm font-bold uppercase tracking-wide">
+              Venda realizada
+            </span>
           </div>
-          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Venda realizada!</h2>
-          <p className="mt-2 text-slate-600 dark:text-slate-300">Código do bilhete</p>
-          <p className="mt-1 font-mono text-3xl font-extrabold tracking-wide text-emerald-600">{sucesso.codigo}</p>
-          <div className="mt-8 flex gap-3">
-            <button
-              onClick={() => setSucesso(null)}
-              className="flex-1 rounded-xl bg-emerald-600 py-3 font-semibold text-white shadow-md hover:bg-emerald-700"
-            >
-              Nova venda
-            </button>
-            <Link
-              href="/cliente/bilhete"
-              className="flex-1 rounded-xl border border-slate-300 py-3 font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300"
-            >
-              Ver bilhete
-            </Link>
-          </div>
+        </div>
+
+        {/* Bilhete renderizado igual ao da tela "Meus Bilhetes". */}
+        <div className="px-4 pt-4">
+          <BilheteDetalhado
+            ref={bilheteSucessoRef}
+            bilhete={sucesso}
+            bancaNome={bancaNome}
+            cambistaNome={cambista?.login ?? ""}
+            cotacaoPara={(mod) =>
+              cambista ? getCotacaoEfetiva(cambista, mod as never) : 0
+            }
+            rodapeTexto={
+              branding.bilheteRodape ||
+              getConfig().textoRodapeBilhete ||
+              undefined
+            }
+            logoUrl={branding.logoUrl ?? null}
+          />
+        </div>
+
+        {/* Ações: Compartilhar (sem legenda) + Nova venda. */}
+        <div className="mt-4 flex flex-col gap-2 px-4">
+          <CompartilharBilheteBtn
+            targetRef={bilheteSucessoRef}
+            // CRÍTICO: caption vazio. O cliente quer compartilhar SÓ a
+            // imagem do bilhete, sem texto adicional acompanhante.
+            caption=""
+            filename={`bilhete-${sucesso.codigo}.png`}
+            label="Enviar bilhete"
+          />
+          <button
+            onClick={() => setSucesso(null)}
+            className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white shadow-md hover:bg-emerald-700"
+          >
+            Nova venda
+          </button>
+          <Link
+            href="/cliente/bilhete"
+            className="w-full rounded-xl border border-slate-300 bg-white py-3 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
+          >
+            Ver meus bilhetes
+          </Link>
         </div>
       </div>
     );

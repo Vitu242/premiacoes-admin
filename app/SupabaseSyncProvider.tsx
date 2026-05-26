@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useSupabase, initFromSupabase } from "@/lib/sync-supabase";
 import { SYNC_COMPLETE_EVENT } from "@/lib/use-config-refresh";
 import { startRealtime } from "@/lib/realtime";
@@ -8,7 +8,6 @@ import { startSyncQueueLoop, flushSyncQueue } from "@/lib/sync-queue";
 import { startServerTimeSync } from "@/lib/server-time";
 import { carregarAlertasDoSupabase } from "@/lib/alertas";
 
-const SYNC_TIMEOUT_MS = 8000;
 const REALTIME_DEBOUNCE_MS = 800;
 
 async function syncFromSupabase(): Promise<void> {
@@ -25,7 +24,6 @@ async function syncFromSupabase(): Promise<void> {
 }
 
 export function SupabaseSyncProvider({ children }: { children: React.ReactNode }) {
-  const [ready, setReady] = useState(!useSupabase);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -34,19 +32,15 @@ export function SupabaseSyncProvider({ children }: { children: React.ReactNode }
     startServerTimeSync();
     // Inicia o loop de reenvio offline → online sempre, mesmo sem realtime ativo
     startSyncQueueLoop();
-    if (!useSupabase) {
-      setReady(true);
-      return;
-    }
-    let cancelled = false;
-    const timeout = setTimeout(() => {
-      if (!cancelled) setReady(true);
-    }, SYNC_TIMEOUT_MS);
-    syncFromSupabase()
-      .then(() => { if (!cancelled) setReady(true); })
-      .catch(() => { if (!cancelled) setReady(true); })
-      .finally(() => clearTimeout(timeout));
-    return () => { cancelled = true; clearTimeout(timeout); };
+    if (!useSupabase) return;
+    // CRÍTICO: NÃO bloqueia a renderização esperando o sync. O app é
+    // offline-first — todos os dados que o cliente precisa estão no
+    // localStorage. O sync acontece em background e os componentes que
+    // ouvem `SYNC_COMPLETE_EVENT` revalidam quando termina.
+    //
+    // Antes, esse provider segurava o app inteiro atrás de "Sincronizando
+    // dados..." por até 8 segundos — péssimo em rede ruim.
+    syncFromSupabase().catch(() => {});
   }, []);
 
   // Re-sync ao voltar para a aba
@@ -101,19 +95,6 @@ export function SupabaseSyncProvider({ children }: { children: React.ReactNode }
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
-
-  if (!ready) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-slate-900">
-        <div className="text-center">
-          <p className="text-gray-600 dark:text-slate-300">Sincronizando dados...</p>
-          <p className="mt-2 text-sm text-gray-400 dark:text-slate-500">
-            Se demorar, a página abrirá em instantes.
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   return <>{children}</>;
 }

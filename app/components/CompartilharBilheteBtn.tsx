@@ -240,9 +240,19 @@ export default function CompartilharBilheteBtn({
     const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
     const canShareFiles = nav.canShare?.({ files: [file] }) ?? true;
 
+    // Se o caller passou caption vazio, NÃO incluir `text` no payload —
+    // evita WhatsApp/Telegram pré-preencherem mensagem com legenda
+    // automática "Bilhete" ou similar. Cliente quer só a imagem pura.
+    const payloadFiles: ShareData = text
+      ? { files: [file], title: "Bilhete", text }
+      : { files: [file] };
+    const payloadText: ShareData = text
+      ? { title: "Bilhete", text }
+      : { title: "Bilhete" };
+
     if (canShareFiles) {
       try {
-        await navigator.share({ files: [file], title: "Bilhete", text });
+        await navigator.share(payloadFiles);
         return "image";
       } catch (err) {
         const msg = (err as Error).message || "";
@@ -254,7 +264,7 @@ export default function CompartilharBilheteBtn({
     }
 
     try {
-      await navigator.share({ title: "Bilhete", text });
+      await navigator.share(payloadText);
       return "text-only";
     } catch (err) {
       const msg = (err as Error).message || "";
@@ -403,7 +413,11 @@ function ShareSheet({
     const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
     try {
       if (typeof navigator.share === "function" && nav.canShare && nav.canShare({ files: [imgFile] })) {
-        await navigator.share({ files: [imgFile], title: "Bilhete", text: caption });
+        // Se caption vazio, NÃO inclui `text` (cliente quer só imagem).
+        const payload: ShareData = caption
+          ? { files: [imgFile], title: "Bilhete", text: caption }
+          : { files: [imgFile] };
+        await navigator.share(payload);
         return true;
       }
     } catch (err) {
