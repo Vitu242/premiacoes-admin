@@ -6,6 +6,7 @@ import { SYNC_COMPLETE_EVENT } from "@/lib/use-config-refresh";
 import { startRealtime } from "@/lib/realtime";
 import { startSyncQueueLoop, flushSyncQueue } from "@/lib/sync-queue";
 import { startServerTimeSync } from "@/lib/server-time";
+import { carregarAlertasDoSupabase } from "@/lib/alertas";
 
 const SYNC_TIMEOUT_MS = 8000;
 const REALTIME_DEBOUNCE_MS = 800;
@@ -16,6 +17,8 @@ async function syncFromSupabase(): Promise<void> {
   // engano quando o init considerar o Supabase como fonte da verdade.
   try { await flushSyncQueue(); } catch {}
   await initFromSupabase();
+  // Sincroniza alertas (pendências que o admin precisa ver) com o servidor.
+  try { await carregarAlertasDoSupabase(); } catch {}
   // Não recalcula caixa/bilhetes automaticamente no F5 — isso fazia prestação de contas
   // e cancelamentos "voltarem". Use os botões em Prestar Contas / Bilhetes se precisar.
   try { window.dispatchEvent(new CustomEvent(SYNC_COMPLETE_EVENT)); } catch {}

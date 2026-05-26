@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabase-server";
 import { buscarResultadoExtracao } from "@/lib/buscar-resultados-externos";
 import { autorizarCronInterno, autorizarSyncRequest } from "@/lib/auth-server";
+import { registrarAlertaServidor } from "@/lib/alertas-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -232,28 +233,17 @@ async function processar(req: Request): Promise<NextResponse> {
         continue;
       }
 
-      // CRÍTICO: NÃO sobrescrever um resultado existente se o 1º prêmio
-      // FOR DIFERENTE do que já está salvo. Cenário real do bug:
-      //   - Cron pega resultado preliminar com 1º=ABCD
-      //   - Bilhetes da extração são conferidos: alguns viram "pago"
-      //   - Cambistas pagam os clientes
-      //   - Cron `completar=1` pega resultado oficial com 1º=WXYZ
-      //   - Sem essa proteção, o resultado seria sobrescrito,
-      //     bilhetes "pago" virariam "perdedor", caixa do cambista
-      //     ficava furado (saída/comissão/entrada bagunçadas).
-      // Se o 1º prêmio mudou, é mudança CRÍTICA — deixa o admin
-      // resolver manualmente (apagar e re-criar).
+      // ATENÇÃO: se o 1º prêmio MUDOU em relação ao salvo, isso pode
+      // reverter bilhetes que já estavam "pago" (cliente já recebeu).
+      // Não bloqueamos a atualização — o resultado correto deve prevalecer
+      // — mas registramos um ALERTA pra o admin saber e tomar providência.
+      let premio1MudouDe: string | null = null;
       if (existente && completar) {
         const premioExistente1 = (
           (existente.premios ?? {}) as Record<string, string>
         )["1"];
         if (premioExistente1 && premioExistente1 !== grupos1) {
-          log.push({
-            ...base,
-            status: "erro_fonte",
-            erro: `1º prêmio mudou (${premioExistente1} → ${grupos1}); sobrescrita bloqueada para proteger bilhetes pagos`,
-          });
-          continue;
+          premio1MudouDe = premioExistente1;
         }
       }
 
@@ -295,6 +285,23 @@ async function processar(req: Request): Promise<NextResponse> {
         status: existente ? "completado" : "salvo",
         premios: nNovos,
       });
+
+      // Se o 1º prêmio mudou, registra alerta pra o admin saber. A re-conferência
+      // dos bilhetes acontecerá quando o cliente abrir o app (via realtime), e os
+      // bilhetes que viraram pago→perdedor vão gerar alertas próprios também.
+      if (premio1MudouDe) {
+        try {
+          await registrarAlertaServidor(sb, {
+            tipo: "resultado_corrigido",
+            titulo: `Resultado mudou: ${ext.nome}`,
+            detalhes: `O 1º prêmio da extração ${ext.nome} (${dataHoje}) foi atualizado de ${premio1MudouDe} para ${grupos1}. Bilhetes pagos com base no resultado anterior podem virar perdedor — verifique a tela de Alertas.`,
+            extracaoNome: ext.nome,
+            data: dataHoje,
+          });
+        } catch {
+          /* não bloqueia o cron */
+        }
+      }
     } catch (e) {
       log.push({ ...base, status: "erro_fonte", erro: (e as Error).message });
     }

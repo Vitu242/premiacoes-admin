@@ -3,6 +3,7 @@
 import type { Gerente, Cambista, Extracao, Bilhete, Lancamento, Resultado, Sorteio } from "./types";
 import { pushToSupabase, useSupabase, pushConfigToSupabase, deleteFromSupabase, pushCambistaPatch } from "./sync-supabase";
 import { nowServer } from "./server-time";
+import { registrarAlerta } from "./alertas";
 import { CODIGO_CHEFE } from "./auth";
 import {
   COTACOES_PADROES_DEFAULT,
@@ -1784,18 +1785,6 @@ function atualizarBilhetesComResultado(resultado: Resultado): Bilhete[] {
     if (idx < 0) continue;
     const situacaoAnterior = bilhetes[idx].situacao;
 
-    // CRÍTICO: bilhete que JÁ ESTAVA pago NÃO vira perdedor automaticamente
-    // só porque o resultado foi atualizado depois. Cenário real: o cron
-    // pega um resultado parcial/errado primeiro, paga o cliente, e depois
-    // o cron `completar=1` sobrescreve com o resultado correto. Se isso
-    // virasse o bilhete em perdedor de novo, o caixa do cambista ficaria
-    // furado (saída/comissão/entrada bagunçados).
-    //
-    // Para REVERTER um bilhete pago, o admin tem que cancelar manualmente
-    // (botão "Cancelar" em /bilhetes) ou rodar "Atualizar Caixa" que faz
-    // a reconciliação completa partindo dos resultados atuais.
-    if (situacaoAnterior === "pago") continue;
-
     const conf = conferirBilhete(b, resultado, cam ?? null, getCotacaoEfetiva, getPremioMilharBrinde());
     const novaSituacao = conf.valorGanho > 0 ? "pago" : "perdedor";
     if (situacaoAnterior === novaSituacao) continue;
@@ -1814,6 +1803,24 @@ function atualizarBilhetesComResultado(resultado: Resultado): Bilhete[] {
           (deltaPorCambista.get(String(cam.id)) ?? 0) + conf.valorGanho,
         );
       }
+    }
+
+    // CRÍTICO: bilhete que estava `pago` virou `perdedor`. Cenário real:
+    // o cron pega resultado preliminar, paga o cliente; depois um resultado
+    // corrigido faz a conferência mudar. O dinheiro JÁ foi pago no balcão.
+    // Re-conferimos normalmente, MAS gravamos um ALERTA pra o admin
+    // tomar providência (cobrar de volta, ajustar caixa, etc.).
+    if (situacaoAnterior === "pago" && novaSituacao !== "pago") {
+      registrarAlerta({
+        tipo: "bilhete_pago_para_perdedor",
+        titulo: `Bilhete ${b.codigo}: pago → ${novaSituacao}`,
+        detalhes: `O bilhete ${b.codigo} de ${cam?.login ?? "cambista"} estava marcado como PAGO mas o resultado atualizado da extração ${b.extracaoNome} fez a conferência virar ${novaSituacao}. O cambista pode já ter pago o cliente — verifique e tome providência.`,
+        cambistaId: b.cambistaId,
+        cambistaNome: cam?.login,
+        bilheteId: b.id,
+        bilheteCodigo: b.codigo,
+        valor: b.total,
+      });
     }
   }
 

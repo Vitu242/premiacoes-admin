@@ -1,11 +1,14 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { getAdminCodigo, CODIGO_CHEFE } from "@/lib/auth";
+import { contarAlertasPendentes } from "@/lib/alertas";
 
 const menuItems = [
   { href: "/", label: "Prestar Contas" },
+  { href: "/alertas", label: "Alertas", badge: "alertas" as const },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/atividade", label: "Atividade ao vivo" },
   { href: "/cambistas", label: "Cambistas" },
@@ -32,6 +35,19 @@ export default function Sidebar({ isOpen = true, onClose }: SidebarProps) {
   const pathname = usePathname();
   const codigo = getAdminCodigo();
   const isChefe = codigo === CODIGO_CHEFE;
+  const [alertasPendentes, setAlertasPendentes] = useState(0);
+
+  useEffect(() => {
+    const refresh = () => setAlertasPendentes(contarAlertasPendentes());
+    refresh();
+    const onChange = () => refresh();
+    window.addEventListener("premiacoes_alertas_changed", onChange);
+    const id = setInterval(refresh, 15_000);
+    return () => {
+      window.removeEventListener("premiacoes_alertas_changed", onChange);
+      clearInterval(id);
+    };
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem("premiacoes_admin");
@@ -73,21 +89,33 @@ export default function Sidebar({ isOpen = true, onClose }: SidebarProps) {
               Gerir admins
             </Link>
           )}
-          {menuItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={handleLinkClick}
-              className={`rounded px-4 py-3 text-sm transition-colors ${
-                pathname === item.href ||
-                (item.href === "/loterias" && (pathname === "/instantanea" || pathname === "/sorteio"))
-                  ? "bg-orange-500/90 text-white"
-                  : "text-gray-300 hover:bg-gray-700 hover:text-white"
-              }`}
-            >
-              {item.label}
-            </Link>
-          ))}
+          {menuItems.map((item) => {
+            const ativo =
+              pathname === item.href ||
+              (item.href === "/loterias" &&
+                (pathname === "/instantanea" || pathname === "/sorteio"));
+            const showBadge =
+              item.badge === "alertas" && alertasPendentes > 0;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={handleLinkClick}
+                className={`flex items-center justify-between rounded px-4 py-3 text-sm transition-colors ${
+                  ativo
+                    ? "bg-orange-500/90 text-white"
+                    : "text-gray-300 hover:bg-gray-700 hover:text-white"
+                }`}
+              >
+                <span>{item.label}</span>
+                {showBadge && (
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[10px] font-bold text-white">
+                    {alertasPendentes > 99 ? "99+" : alertasPendentes}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
         </nav>
         <button
           onClick={() => {
